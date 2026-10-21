@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/disputes", label: "Disputes", icon: Inbox },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/history", label: "History", icon: History },
+  { href: "/metrics", label: "Metrics", icon: BarChart3 },
 ];
 
 export function SidebarNav() {
@@ -32,11 +33,6 @@ export function SidebarNav() {
           </Link>
         );
       })}
-      <span className="flex h-9 items-center gap-2 rounded-md px-2 text-sm text-zinc-400" aria-disabled="true">
-        <BarChart3 className="size-4" aria-hidden />
-        Metrics
-        <span className="ml-auto text-[10px] uppercase tracking-wide">Soon</span>
-      </span>
     </nav>
   );
 }

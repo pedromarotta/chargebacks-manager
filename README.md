@@ -44,6 +44,15 @@ On a case at "Representment received", the analyst enters P(win) and the decisio
 
 The analyst still chooses. The server recomputes P(win), the expected value and the recommendation from the amount in the database and saves them with the proposal. The approver sees them, plus whether the decision follows the recommendation. P(win) is optional in the API.
 
+## Metrics
+
+`/metrics` (every role, including the auditor) is computed live by `computeMetrics()` in `src/server/disputes/metrics.ts`:
+
+- open disputes by days left (past due, ≤1, 1–3, 3–7, 7–14, >14 days), plus the amount at risk of timeout (≤72h or past due)
+- provisional credit outstanding on open cases
+- win and loss rate on closed cases (written off and expired count as losses)
+- how often the decided action matched the fight-or-accept recommendation (only decisions saved with a P(win))
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.
