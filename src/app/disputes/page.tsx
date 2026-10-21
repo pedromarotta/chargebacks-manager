@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BulkCheckbox, BulkSelectAll, BulkWriteOff } from "@/components/disputes/bulk-write-off";
 import { ClientFilter } from "@/components/disputes/client-filter";
 import { DueBadge, StatusBadge } from "@/components/status-badge";
 import { EmptyState, SignInPrompt } from "@/components/states";
@@ -8,6 +9,8 @@ import { formatDueIn, formatMoney, REASON_LABELS } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { getCurrentUser } from "@/server/auth";
 import { getQueue, QUEUE_TABS, type QueueTab } from "@/server/disputes/queries";
+import { needsApproval } from "@/server/disputes/rules";
+import { can } from "@/server/policy";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +41,12 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
   const result = await getQueue(user, { tab, client }, now);
   if (!result.ok) return <p className="text-sm">{result.message}</p>;
   const { rows, clients, stats, networkCalls, tabCounts } = result.value;
+  const canBulk = can(user, "decision:propose");
+  const bulkCandidates = canBulk
+    ? rows
+        .filter((d) => d.status === "REPRESENTMENT_RECEIVED" && !needsApproval(d.amountCents, d.currency) && new Date(d.dueAt) > now)
+        .map((d) => ({ id: d.id, amountCents: d.amountCents, currency: d.currency }))
+    : [];
 
   const strip = [
     { label: "Open cases", value: String(stats.openCases) },
@@ -89,10 +98,16 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
         <ClientFilter clients={clients} value={client} />
       </div>
 
+      <BulkWriteOff candidates={bulkCandidates}>
       <div className="rounded-lg border border-zinc-200 bg-white">
         <Table>
           <TableHeader>
             <TableRow>
+              {canBulk ? (
+                <TableHead className="w-8">
+                  <BulkSelectAll />
+                </TableHead>
+              ) : null}
               <TableHead>Case</TableHead>
               <TableHead>Client</TableHead>
               <TableHead>Merchant</TableHead>
@@ -105,13 +120,18 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7}>
+                <TableCell colSpan={canBulk ? 8 : 7}>
                   <EmptyState title="No disputes match this filter." hint="Try another tab or client, or import today's file." />
                 </TableCell>
               </TableRow>
             ) : (
               rows.map((d) => (
                 <TableRow key={d.id} className="h-11">
+                  {canBulk ? (
+                    <TableCell className="w-8">
+                      <BulkCheckbox id={d.id} />
+                    </TableCell>
+                  ) : null}
                   <TableCell className="font-medium">
                     <Link href={`/disputes/${d.id}`} className="text-indigo-700 hover:underline focus-visible:underline">
                       {d.id}
@@ -133,6 +153,7 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
           </TableBody>
         </Table>
       </div>
+      </BulkWriteOff>
     </div>
   );
 }

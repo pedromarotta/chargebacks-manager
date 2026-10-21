@@ -69,6 +69,7 @@ const ATTEMPT_LABELS: Record<string, string> = {
   evidence: "change evidence",
   attach: "attach a file",
   memo: "edit the pre-arbitration memo",
+  bulk_write_off: "write off in bulk",
   import: "import a file",
   representment: "record a merchant response",
   ruling: "record a ruling",
