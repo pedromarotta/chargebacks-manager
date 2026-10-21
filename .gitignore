@@ -147,3 +147,10 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Local data
+/prisma/*.db
+/prisma/*.db-journal
+/.tmp
+/samples/disputes-today.csv
+/test-results
