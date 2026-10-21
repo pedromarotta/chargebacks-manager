@@ -53,6 +53,14 @@ const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   ruling: "network:event",
 };
 
+/** Role refusals that deserve a more specific message than the generic one. */
+const ROLE_MESSAGES: Partial<Record<Attempt, string>> = {
+  approve: "Only a lead can approve this decision.",
+  reject: "Only a lead can reject this decision.",
+  funds_approve: "Only a lead can approve this funds move.",
+  funds_reject: "Only a lead can reject this funds move.",
+};
+
 // ---------- Inputs (Zod on every server input) ----------
 
 const DisputeId = z.string().min(1).max(40);
@@ -162,7 +170,7 @@ async function loadCase(w: Writer, rawId: unknown, now: Date): Promise<Refusal |
   if (dispute) w.disputeId = dispute.id;
 
   if (!can(w.actor, ATTEMPT_PERMISSION[w.attempted])) {
-    return w.refuse("ROLE_NOT_ALLOWED", dispute ? { before: { status: dispute.status } } : {});
+    return w.refuse("ROLE_NOT_ALLOWED", { message: ROLE_MESSAGES[w.attempted], ...(dispute ? { before: { status: dispute.status } } : {}) });
   }
   if (!dispute) return w.refuse("NOT_FOUND");
 
@@ -699,7 +707,7 @@ export async function bulkWriteOff(actor: Actor | null, input: unknown, now = ne
 
 // ---------- Import (R10) ----------
 
-export type ImportRowResult = "VALID" | "IMPORTED" | "REJECTED" | "DUPLICATE";
+export type ImportRowResult = "VALID" | "IMPORTED" | "REJECTED" | "DUPLICATE" | "REPRESENTMENT";
 
 export interface ImportRowView {
   rowNumber: number;
@@ -724,6 +732,8 @@ export interface ImportResult {
   imported: number;
   rejected: number;
   duplicates: number;
+  /** Rows that carried a merchant response for an existing filed case (R10). */
+  representments: number;
   rows: ImportRowView[];
 }
 
@@ -758,16 +768,29 @@ export async function importDisputes(actor: Actor | null, input: unknown, now = 
     if (!file.ok) return w.refuse("INVALID_INPUT", { message: file.error, after: { filename } });
 
     const candidateIds = file.rows.flatMap((r) => (r.valid ? [r.row.caseId] : []));
-    const existing = new Set(
-      (await w.tx.dispute.findMany({ where: { id: { in: candidateIds } }, select: { id: true } })).map((d) => d.id),
+    const existing = new Map(
+      (await w.tx.dispute.findMany({ where: { id: { in: candidateIds } }, select: { id: true, status: true, dueAt: true } })).map(
+        (d) => [d.id, d],
+      ),
     );
 
     const seen = new Set<string>();
     const rows: ImportRowView[] = [];
     const toCreate: ValidDisputeRow[] = [];
+    const toRepresent: { id: string; dueAt: Date; merchantResponse: string }[] = [];
     for (const r of file.rows) {
+      const current = r.valid ? existing.get(r.row.caseId) : undefined;
       if (!r.valid) {
         rows.push({ rowNumber: r.rowNumber, caseId: r.caseId, result: "REJECTED", reasons: r.reasons, row: null });
+      } else if (current && r.row.merchantResponse !== null && current.status === "CHARGEBACK_FILED" && !seen.has(current.id)) {
+        // The daily file also carries merchant responses for cases already filed: record the representment (R10).
+        seen.add(current.id);
+        if (isPastDeadline(current.dueAt, now)) {
+          rows.push({ rowNumber: r.rowNumber, caseId: current.id, result: "REJECTED", reasons: ["case is past its network deadline"], row: null });
+        } else {
+          toRepresent.push({ id: current.id, dueAt: current.dueAt, merchantResponse: r.row.merchantResponse });
+          rows.push({ rowNumber: r.rowNumber, caseId: current.id, result: "REPRESENTMENT", reasons: [], row: previewOf(r.row) });
+        }
       } else if (existing.has(r.row.caseId) || seen.has(r.row.caseId)) {
         rows.push({
           rowNumber: r.rowNumber,
@@ -792,6 +815,7 @@ export async function importDisputes(actor: Actor | null, input: unknown, now = 
       imported: toCreate.length,
       rejected: rows.filter((r) => r.result === "REJECTED").length,
       duplicates: rows.filter((r) => r.result === "DUPLICATE").length,
+      representments: toRepresent.length,
     };
     if (dryRun) return ok({ dryRun: true, batchId: null, ...counts, rows });
 
@@ -817,6 +841,22 @@ export async function importDisputes(actor: Actor | null, input: unknown, now = 
       });
     }
     const batchId = batchIdFor(now);
+    const responseDueAt = addDays(now, RESPONSE_WINDOW_DAYS);
+    for (const rep of toRepresent) {
+      const claimed = await w.tx.dispute.updateMany({
+        where: { id: rep.id, status: "CHARGEBACK_FILED" },
+        data: { status: "REPRESENTMENT_RECEIVED", merchantResponse: rep.merchantResponse, representmentReceivedAt: now, dueAt: responseDueAt },
+      });
+      if (claimed.count !== 1) continue;
+      await record(w.tx, {
+        actor: w.actor,
+        action: "representment_received",
+        disputeId: rep.id,
+        before: { status: "CHARGEBACK_FILED", dueAt: rep.dueAt.toISOString() },
+        after: { status: "REPRESENTMENT_RECEIVED", dueAt: responseDueAt.toISOString(), batchId },
+        note: rep.merchantResponse,
+      });
+    }
     await w.tx.importBatch.create({
       data: {
         id: batchId,
@@ -968,7 +1008,7 @@ async function loadTrackedFunds(w: Writer, rawId: unknown): Promise<Refusal | Di
   const id = DisputeId.safeParse(rawId);
   const d = id.success ? await w.tx.dispute.findUnique({ where: { id: id.data } }) : null;
   if (d) w.disputeId = d.id;
-  if (!can(w.actor, ATTEMPT_PERMISSION[w.attempted])) return w.refuse("ROLE_NOT_ALLOWED", d ? { before: fundsSnapshot(d) } : {});
+  if (!can(w.actor, ATTEMPT_PERMISSION[w.attempted])) return w.refuse("ROLE_NOT_ALLOWED", { message: ROLE_MESSAGES[w.attempted], ...(d ? { before: fundsSnapshot(d) } : {}) });
   if (!d) return w.refuse("NOT_FOUND");
   if (d.status !== "CLOSED_WON" || d.fundsStatus === null) {
     return w.refuse("INVALID_STATUS", {

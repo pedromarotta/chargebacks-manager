@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { SESSION_COOKIE, devLoginEnabled, signSession } from "@/server/auth";
+import { SESSION_COOKIE, devLoginEnabled, sessionCookieOptionsFor, signSession } from "@/server/auth";
 import { listUsers } from "@/server/disputes/queries";
 import { notFound } from "@/server/http";
 
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Unknown user." } }, { status: 400 });
   }
   const res = NextResponse.json({ user });
-  res.cookies.set(SESSION_COOKIE, signSession(user.id), { httpOnly: true, sameSite: "lax", path: "/" });
+  res.cookies.set(SESSION_COOKIE, signSession(user.id), sessionCookieOptionsFor(req.headers, req.url));
   return res;
 }
 

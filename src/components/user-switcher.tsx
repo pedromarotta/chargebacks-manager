@@ -1,10 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useFormStatus } from "react-dom";
 import { toast } from "sonner";
+import { switchUser } from "@/app/actions/session";
 import { initials, ROLE_LABELS } from "@/lib/format";
-import { postJson } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -12,21 +11,17 @@ interface Props {
   currentId: string | null;
 }
 
-/** Dev-only one-click user switch (simulated login). */
+/** Dev-only one-click user switch (simulated login). A plain form, so a click before hydration still signs in. */
 export function UserSwitcher({ users, currentId }: Props) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  return (
+    <form action={switchUser} onSubmit={() => toast.dismiss()}>
+      <SwitcherButtons users={users} currentId={currentId} />
+    </form>
+  );
+}
 
-  async function switchTo(id: string) {
-    const result = await postJson("/api/session", { userId: id });
-    toast.dismiss();
-    if (!result.ok) {
-      toast.error(result.message);
-      return;
-    }
-    startTransition(() => router.refresh());
-  }
-
+function SwitcherButtons({ users, currentId }: Props) {
+  const { pending } = useFormStatus();
   return (
     <div role="group" aria-label="Switch user" className={cn("flex items-center gap-1", pending && "opacity-60")}>
       <span className="mr-1 text-xs text-muted-foreground">Act as</span>
@@ -35,8 +30,9 @@ export function UserSwitcher({ users, currentId }: Props) {
         return (
           <button
             key={u.id}
-            type="button"
-            onClick={() => switchTo(u.id)}
+            type="submit"
+            name="userId"
+            value={u.id}
             aria-pressed={active}
             title={`${u.name} · ${ROLE_LABELS[u.role] ?? u.role}`}
             aria-label={`Act as ${u.name} (${ROLE_LABELS[u.role] ?? u.role})`}
