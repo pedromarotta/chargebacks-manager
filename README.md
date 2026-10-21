@@ -85,8 +85,23 @@ Auditors get an *Export CSV* button on the queue and on the history page. Both e
 
 - `GET /api/export/queue?tab=&client=` exports one row per case: case, client, `card_last4`, merchant, amount and provisional credit as decimals (`1240.00`), currency, reason, status, UTC timestamps, due risk and decision fields.
 - `GET /api/export/history?kind=&actor=&case=` exports every matching history row, not only the 1,000 the page shows. Each row has the plain-language summary and changes plus the raw before/after JSON.
-- Files download as `text/csv` attachments with `no-store`. Cells are RFC 4180 quoted. A cell that starts with `= + - @` gets a leading `'` so spreadsheets won't run it as a formula. As a last line of defense, anything that looks like a full card number is replaced with `[redacted]`.
+- Files download as `text/csv` attachments with `no-store`. Cells are RFC 4180 quoted. A cell that starts with `= + - @` gets a leading `'` so spreadsheets won't run it as a formula. As a last line of defense, anything that looks like a full card number is replaced with `[card number removed]`.
 - Each export writes a `data_exported` history row recording who exported, what, how many rows and which filters.
+
+## Card number audit
+
+`tests/pan-audit.test.ts` is the proof that a full card number can't be stored, returned or exported. Using four card-number formats (plain, spaced, dashed, Amex), it sends a PAN through every write path: import fields, the import filename, decision notes, approve and reject notes, memos, bulk notes and ids, representment text, evidence keys, file names and file bytes, and case ids in the URL. Then it:
+
+- reads every string column of every table, plus every uploaded file, and expects no Luhn-valid 13–19 digit run;
+- serializes every response from those writes, plus every case page, the queue, the full history and both CSV exports, and expects the same.
+
+How it's enforced:
+
+1. Request free text holding a card number is refused with "This looks like a full card number. Remove it and use only the last 4 digits." The refusal row doesn't copy the text.
+2. `record()` runs a backstop, `redactCardNumbers()`, over every history note and before/after value, so a write path that forgets step 1 still can't put a PAN in History.
+3. CSV exports apply the same redaction to every cell.
+
+Before this change, the audit found one real leak: a card number in an import *filename* was copied into the refusal's history row.
 
 ## API
 

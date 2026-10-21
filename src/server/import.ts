@@ -111,6 +111,11 @@ export function containsCardNumber(value: string): boolean {
   return false;
 }
 
+/** Replaces every card-number-looking digit run with a marker. Last line of defense for anything written or exported. */
+export function redactCardNumbers(value: string): string {
+  return value.replace(/\d(?:[ -]?\d){12,}/g, (m) => (containsCardNumber(m) ? "[card number removed]" : m));
+}
+
 const AMOUNT_RE = /^\d{1,9}(\.\d{1,2})?$/;
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;

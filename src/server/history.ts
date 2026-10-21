@@ -1,3 +1,4 @@
+import { redactCardNumbers } from "./import";
 import type { Tx } from "./db";
 import type { Actor } from "./domain";
 
@@ -30,8 +31,18 @@ export interface HistoryEvent {
   at?: Date;
 }
 
+function scrub(value: unknown): unknown {
+  if (typeof value === "string") return redactCardNumbers(value);
+  if (Array.isArray(value)) return value.map(scrub);
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v)]));
+  }
+  return value;
+}
+
+/** Backlog 6: a full card number never reaches History, even if a caller forgets to refuse it. */
 function toJson(value: Record<string, unknown> | null | undefined): string | null {
-  return value ? JSON.stringify(value) : null;
+  return value ? JSON.stringify(scrub(value)) : null;
 }
 
 /** The only code that writes to History. Always called inside the business transaction (R9). */
@@ -45,7 +56,7 @@ export async function record(tx: Tx, event: HistoryEvent): Promise<void> {
       disputeId: event.disputeId ?? null,
       before: toJson(event.before),
       after: toJson(event.after),
-      note: event.note ?? null,
+      note: event.note == null ? null : redactCardNumbers(event.note),
     },
   });
 }

@@ -22,7 +22,7 @@ describe("CSV export (backlog 5)", () => {
     expect(csvCell("line1\nline2")).toBe('"line1\nline2"');
     expect(csvCell("=HYPERLINK(\"x\")")).toBe("\"'=HYPERLINK(\"\"x\"\")\"");
     expect(csvCell("-5")).toBe("'-5");
-    expect(csvCell("card 4111 1111 1111 1111 used")).toBe("card [redacted] used");
+    expect(csvCell("card 4111 1111 1111 1111 used")).toBe("card [card number removed] used");
     expect(csvCell("ending 4417")).toBe("ending 4417");
     expect(csvCell(null)).toBe("");
     expect(toCsv(["a", "b"], [[1, "x,y"]])).toBe('a,b\r\n1,"x,y"\r\n');

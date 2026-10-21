@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { getQueue, listHistory, type HistoryFilter, type QueueTab } from "./disputes/queries";
 import { ok, refusal, type Result } from "./errors";
 import { record } from "./history";
-import { containsCardNumber } from "./import";
+import { redactCardNumbers } from "./import";
 import type { Actor } from "./domain";
 import { can } from "./policy";
 
@@ -20,7 +20,7 @@ const FORMULA_START = /^[=+\-@\t\r]/;
 export function csvCell(value: unknown): string {
   if (value === null || value === undefined) return "";
   let s = typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value) : String(value);
-  if (containsCardNumber(s)) s = s.replace(/\d[\d -]{11,}\d/g, "[redacted]");
+  s = redactCardNumbers(s);
   if (FORMULA_START.test(s)) s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
