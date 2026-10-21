@@ -1,5 +1,9 @@
 import {
   approveDecision,
+  approveFundsMove,
+  creditProgram,
+  proposeFundsMove,
+  rejectFundsMove,
   editMemo,
   fileChargeback,
   proposeDecision,
@@ -19,6 +23,10 @@ const ACTIONS: Record<string, Handler> = {
   reject: (actor, id, body) => rejectDecision(actor, id, body),
   evidence: (actor, id, body) => setEvidence(actor, id, body),
   memo: (actor, id, body) => editMemo(actor, id, body),
+  "funds-program": (actor, id) => creditProgram(actor, id),
+  "funds-propose": (actor, id, body) => proposeFundsMove(actor, id, body),
+  "funds-approve": (actor, id, body) => approveFundsMove(actor, id, body),
+  "funds-reject": (actor, id, body) => rejectFundsMove(actor, id, body),
 };
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string; action: string }> }) {

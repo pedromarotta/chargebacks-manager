@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/server/auth";
 import { getDueSoonDigest } from "@/server/disputes/digest";
+import { getFundsBoard } from "@/server/disputes/funds-board";
 import { listUsers } from "@/server/disputes/queries";
 import { ROLE_LABELS } from "@/lib/format";
 import { SidebarNav } from "./sidebar-nav";
@@ -8,6 +9,7 @@ import { UserSwitcher } from "./user-switcher";
 export async function AppShell({ children }: { children: React.ReactNode }) {
   const [user, users] = await Promise.all([getCurrentUser(), listUsers()]);
   const digest = user ? await getDueSoonDigest(user) : null;
+  const funds = user ? await getFundsBoard(user) : null;
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900">
       <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-zinc-200 bg-white">
@@ -15,7 +17,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
           <div className="text-sm font-semibold">Chargebacks Manager</div>
           <div className="text-xs text-muted-foreground">Internal tools</div>
         </div>
-        <SidebarNav dueSoon={digest?.ok ? digest.value.total : 0} />
+        <SidebarNav dueSoon={digest?.ok ? digest.value.total : 0} fundsAlerts={funds?.ok ? funds.value.alerts + funds.value.overLimit : 0} />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-4 border-b border-zinc-200 bg-white/95 px-6 backdrop-blur">

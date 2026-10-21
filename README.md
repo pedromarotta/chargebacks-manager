@@ -98,6 +98,18 @@ The case page shows the 8 steps from BUSINESS_RULES §1: intake, validation, fil
 
 **Rejected filing.** The network can reject a filed chargeback. Simulate it with `npm run reject-filing -- <case_id> "<reason>"`, which goes through `rejectFiling()`, a `network:event`. The case moves to `FILING_REJECTED`, step 3 shows as failed with the reason, steps 4–8 don't apply, and an *Ops review* step becomes current. Ops review can only accept the loss, either by writing it off or by reversing the credit, and the normal rules apply: the $500 threshold, maker-checker, notes, and deadline (30 days). Pre-arbitration is refused. No network message is sent on that decision, because no chargeback exists at the network. Rejecting the proposal returns the case to `FILING_REJECTED`.
 
+## Funds tracking
+
+This covers BUSINESS_RULES §5 for won cases where the cardholder had no provisional credit. A `WON` ruling on a case with `provisional_credit_cents = 0` sets `funds_status = FUNDS_NOT_YET_RECEIVED`. When a provisional credit was given, the win just makes it final, so there's nothing to track.
+
+`FUNDS_NOT_YET_RECEIVED → FUNDS_RECEIVED_FROM_ACQUIRER → FUNDS_CREDITED_TO_PROGRAM → FUNDS_CREDITED_TO_CARDHOLDER`, or `FUNDS_REVERSED` from received or program.
+
+- Receipt is a network event: `npm run funds-received -- <case_id>`.
+- *Mark credited to program* is an internal ledger step for analysts and leads.
+- Crediting the cardholder or reversing always needs maker-checker, whatever the amount (R4). An analyst or lead proposes it with a note (R6), and a different lead approves or rejects it. A self-decision gets 409 `SELF_APPROVAL_BLOCKED` and a `decision_blocked` row. The API actions are `funds-program | funds-propose | funds-approve | funds-reject` on `/api/disputes/[id]/...`.
+- Funds are parked from receipt until they're credited to the cardholder or reversed. The `/funds` page groups parked funds by age (<24h, 1–3d, 3–7d, >7d, over the limit) and flags each case against its jurisdiction's limit minus the buffer (`JURISDICTION_LIMITS` in `src/lib/funds.ts`, illustrative). The sidebar badge counts alerts.
+- Each case's `jurisdiction` defaults to `US`. Seeds CB-1008 (BR, over the limit) and CB-1009 (MX, within the limit) show both.
+
 ## Card number audit
 
 `tests/pan-audit.test.ts` is the proof that a full card number can't be stored, returned or exported. Using four card-number formats (plain, spaced, dashed, Amex), it sends a PAN through every write path: import fields, the import filename, decision notes, approve and reject notes, memos, bulk notes and ids, representment text, evidence keys, file names and file bytes, and case ids in the URL. Then it:

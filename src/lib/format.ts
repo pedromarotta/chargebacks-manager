@@ -74,6 +74,12 @@ const ATTEMPT_LABELS: Record<string, string> = {
   import: "import a file",
   representment: "record a merchant response",
   ruling: "record a ruling",
+  filing_rejected: "record a rejected filing",
+  funds_received: "record funds received",
+  funds_program: "credit funds to the program",
+  funds_propose: "propose a funds move",
+  funds_approve: "approve a funds move",
+  funds_reject: "reject a funds move",
 };
 
 const ACTION_LABELS: Record<string, string> = {
@@ -84,6 +90,11 @@ const ACTION_LABELS: Record<string, string> = {
   chargeback_filed: "Filed the chargeback",
   representment_received: "Merchant response received",
   filing_rejected: "Network rejected the filing",
+  funds_received: "Funds received from the acquirer",
+  funds_credited_to_program: "Funds credited to the program",
+  funds_move_proposed: "Proposed a funds move",
+  funds_move_approved: "Approved a funds move",
+  funds_move_rejected: "Rejected a funds move",
   decision_proposed: "Proposed a decision",
   memo_edited: "Edited the pre-arbitration memo",
   data_exported: "Exported a CSV",
@@ -172,4 +183,11 @@ export function initials(name: string): string {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+/** Backlog 9: "2d 3h" style duration for parked funds. */
+export function formatHours(hours: number): string {
+  if (hours < 1) return "under 1h";
+  const h = Math.floor(hours);
+  return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d ${h % 24}h`;
 }

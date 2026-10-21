@@ -5,6 +5,8 @@ import { EvidenceChecklist } from "@/components/disputes/evidence-checklist";
 import { HistoryList } from "@/components/disputes/history-list";
 import { Lifecycle } from "@/components/disputes/lifecycle";
 import { buildTimeline } from "@/lib/timeline";
+import { FundsPanel } from "@/components/disputes/funds-panel";
+import { fundsInfo } from "@/lib/funds";
 import { DueBadge, StatusBadge } from "@/components/status-badge";
 import { SignInPrompt } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -113,6 +115,16 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
             needsApproval={needsApproval(d.amountCents, d.currency)}
             preArbFee={formatMoney(NETWORK.preArbitrationFeeCents, NETWORK.feeCurrency)}
           />
+          {d.status === "CLOSED_WON" ? (
+            <FundsPanel
+              key={`fp-${formKey}`}
+              dispute={d}
+              info={fundsInfo(d, new Date())}
+              userId={user.id}
+              names={names}
+              perms={{ move: can(user, "funds:move"), approve: can(user, "funds:approve") }}
+            />
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-4">
