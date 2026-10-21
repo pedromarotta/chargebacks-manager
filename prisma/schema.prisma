@@ -1,0 +1,115 @@
+// Enum-like fields are plain strings validated in src/server (portable to Postgres).
+// Money is integer cents plus an ISO currency. All timestamps are UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id   String @id
+  name String
+  role String // analyst | lead | auditor
+}
+
+model Dispute {
+  id                        String    @id
+  client                    String
+  cardLast4                 String    @map("card_last4")
+  merchant                  String
+  amountCents               Int       @map("amount_cents")
+  currency                  String
+  reasonCode                String    @map("reason_code")
+  openedAt                  DateTime  @map("opened_at")
+  dueAt                     DateTime  @map("due_at")
+  status                    String
+  provisionalCreditCents    Int       @map("provisional_credit_cents")
+  representmentReceivedAt   DateTime? @map("representment_received_at")
+  merchantResponse          String?   @map("merchant_response")
+  decisionType              String?   @map("decision_type")
+  proposedBy                String?   @map("proposed_by")
+  proposalNote              String?   @map("proposal_note")
+  decidedBy                 String?   @map("decided_by")
+  decidedAt                 DateTime? @map("decided_at")
+  decisionNote              String?   @map("decision_note")
+  networkRef                String?   @map("network_ref")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  evidence     EvidenceItem[]
+  networkCalls NetworkCall[]
+  history      History[]
+
+  @@index([status])
+  @@index([dueAt])
+}
+
+model EvidenceItem {
+  id        Int       @id @default(autoincrement())
+  disputeId String    @map("dispute_id")
+  key       String
+  label     String
+  required  Boolean
+  checked   Boolean   @default(false)
+  checkedBy String?   @map("checked_by")
+  checkedAt DateTime? @map("checked_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id])
+
+  @@unique([disputeId, key])
+}
+
+model NetworkCall {
+  id             Int      @id @default(autoincrement())
+  idempotencyKey String   @unique @map("idempotency_key")
+  disputeId      String   @map("dispute_id")
+  message        String // CHARGEBACK | ACCEPT | PRE_ARB
+  networkRef     String   @map("network_ref")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  dispute Dispute @relation(fields: [disputeId], references: [id])
+}
+
+model History {
+  id        Int      @id @default(autoincrement())
+  at        DateTime @default(now())
+  actorId   String   @map("actor_id")
+  actorRole String   @map("actor_role")
+  action    String
+  disputeId String?  @map("dispute_id")
+  before    String? // JSON
+  after     String? // JSON
+  note      String?
+
+  dispute Dispute? @relation(fields: [disputeId], references: [id])
+
+  @@index([disputeId])
+  @@index([at])
+}
+
+model ImportBatch {
+  id         String   @id
+  actorId    String   @map("actor_id")
+  filename   String
+  createdAt  DateTime @default(now()) @map("created_at")
+  imported   Int
+  rejected   Int
+  duplicates Int
+
+  rows ImportRow[]
+}
+
+model ImportRow {
+  id        Int     @id @default(autoincrement())
+  batchId   String  @map("batch_id")
+  rowNumber Int     @map("row_number")
+  caseId    String? @map("case_id")
+  result    String // IMPORTED | REJECTED | DUPLICATE
+  reason    String?
+
+  batch ImportBatch @relation(fields: [batchId], references: [id])
+}
