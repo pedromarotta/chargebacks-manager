@@ -108,6 +108,12 @@ function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+export const RECOMMENDATION_LABELS: Record<string, string> = { FIGHT: "fight", ACCEPT: "accept" };
+
+export function formatSignedMoney(cents: number, currency = "USD"): string {
+  return `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${formatMoney(Math.abs(cents), currency)}`;
+}
+
 /** Short human-readable changes, e.g. "Status: Decision pending → Closed · lost". */
 export function historyChanges(h: HistoryLike, currency = "USD"): string[] {
   const before = h.before ?? {};
@@ -132,6 +138,9 @@ export function historyChanges(h: HistoryLike, currency = "USD"): string[] {
   if (decision && h.action.startsWith("decision")) out.push(DECISION_LABELS[decision] ?? decision);
   if (typeof before.provisionalCreditCents === "number" && typeof after.provisionalCreditCents === "number" && before.provisionalCreditCents !== after.provisionalCreditCents) {
     out.push(`Provisional credit: ${formatMoney(before.provisionalCreditCents, currency)} → ${formatMoney(after.provisionalCreditCents, currency)}`);
+  }
+  if (typeof after.pWinPct === "number" && typeof after.expectedValueCents === "number") {
+    out.push(`P(win) ${after.pWinPct}% · expected value ${formatSignedMoney(after.expectedValueCents, currency)} · recommended: ${RECOMMENDATION_LABELS[str(after.recommendation) ?? ""] ?? "—"}`);
   }
   const label = str(after.label);
   if (label) out.push(label);

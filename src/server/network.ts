@@ -2,16 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Tx } from "./db";
 import type { NetworkMessage } from "./domain";
 
-/**
- * The simulated card network. The tool talks to a single network, modelled on
- * "Network A" from BUSINESS_RULES §4 (illustrative fees).
- */
-export const NETWORK = {
-  name: "Network A (simulated)",
-  preArbitrationFeeCents: 1500,
-  arbitrationFeeCents: 65000,
-  feeCurrency: "USD",
-} as const;
+export { NETWORK } from "@/lib/network-config";
 
 export interface SubmitInput {
   idempotencyKey: string;

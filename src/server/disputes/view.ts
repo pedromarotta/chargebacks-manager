@@ -20,6 +20,9 @@ export interface DisputeView {
   decidedBy: string | null;
   decidedAt: string | null;
   decisionNote: string | null;
+  pWinPct: number | null;
+  expectedValueCents: number | null;
+  recommendation: string | null;
   networkRef: string | null;
   updatedAt: string;
 }
@@ -75,6 +78,9 @@ export function toDisputeView(d: Dispute): DisputeView {
     decidedBy: d.decidedBy,
     decidedAt: iso(d.decidedAt),
     decisionNote: d.decisionNote,
+    pWinPct: d.pWinPct,
+    expectedValueCents: d.expectedValueCents,
+    recommendation: d.recommendation,
     networkRef: d.networkRef,
     updatedAt: d.updatedAt.toISOString(),
   };

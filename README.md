@@ -34,13 +34,23 @@ Pick a user with the "Act as" switcher in the top bar (one click; no reload need
 
 Seeded cases include CB-1042 (Norte Bank · Amazon · $1,240 · fraud · merchant responded), CB-1088 (Pampa Wallet · MercadoLibre · $2,310 · Carla proposed pre-arbitration, waiting for another lead), and CB-1003 / CB-1004 ($499.99 / $500.00, either side of the approval threshold).
 
+## Fight-or-accept helper
+
+On a case at "Representment received", the analyst enters P(win) and the decision panel shows (BUSINESS_RULES §4, `src/lib/fight-or-accept.ts`):
+
+- expected recovery = P(win) × amount
+- expected cost = pre-arbitration fee + P(lose) × arbitration fee + $35 handling
+- recommendation: fight when recovery − cost > $0, otherwise accept
+
+The analyst still chooses. The server recomputes P(win), the expected value and the recommendation from the amount in the database and saves them with the proposal. The approver sees them, plus whether the decision follows the recommendation. P(win) is optional in the API.
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.
 
 ```
 POST /api/disputes/:id/file
-POST /api/disputes/:id/propose   { "decisionType": "ACCEPT_LOSS_WRITE_OFF" | "ACCEPT_LOSS_REVERSE_CREDIT" | "ESCALATE_PRE_ARB", "note": "..." }
+POST /api/disputes/:id/propose   { "decisionType": "ACCEPT_LOSS_WRITE_OFF" | "ACCEPT_LOSS_REVERSE_CREDIT" | "ESCALATE_PRE_ARB", "note": "...", "pWinPct"?: 0-100 }
 POST /api/disputes/:id/approve   { "comment"?: "..." }
 POST /api/disputes/:id/reject    { "note": "..." }
 POST /api/disputes/:id/evidence  { "key": "statement", "checked": true }

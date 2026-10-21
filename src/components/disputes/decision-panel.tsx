@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { postJson } from "@/lib/api-client";
-import { DECISION_LABELS, STATUS_LABELS, formatDateTime } from "@/lib/format";
+import { assessFightOrAccept, followsRecommendation } from "@/lib/fight-or-accept";
+import { NETWORK } from "@/lib/network-config";
+import { DECISION_LABELS, RECOMMENDATION_LABELS, STATUS_LABELS, formatDateTime, formatMoney, formatSignedMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { DisputeView } from "@/server/disputes/view";
 import { ShieldCheck } from "lucide-react";
@@ -31,6 +33,7 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
   const [error, setError] = useState<string | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
   const [note, setNote] = useState("");
+  const [pWin, setPWin] = useState("");
 
   async function act(action: string, body: unknown, success: string) {
     setBusy(action);
@@ -82,9 +85,11 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
             setError("Choose a decision first.");
             return;
           }
-          void act("propose", { decisionType: choice, note }, needsApproval ? "Decision proposed. It now needs a lead's approval." : "Decision executed.");
+          const pWinPct = pWin.trim() === "" ? undefined : Number(pWin);
+          void act("propose", { decisionType: choice, note, pWinPct }, needsApproval ? "Decision proposed. It now needs a lead's approval." : "Decision executed.");
         }}
       >
+        <FightOrAcceptHelper amountCents={d.amountCents} currency={d.currency} pWin={pWin} onPWin={setPWin} />
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 flex items-center gap-2 text-sm font-medium">
             Decision
@@ -133,6 +138,7 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
           </div>
           <p className="text-xs text-muted-foreground">Proposed by {name(d.proposedBy)}</p>
           {d.proposalNote ? <p className="mt-2 whitespace-pre-wrap">“{d.proposalNote}”</p> : null}
+          <SavedRecommendation dispute={d} />
         </div>
         {perms.decide ? (
           <>
@@ -169,6 +175,7 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
             {d.decidedBy ? ` · decided by ${name(d.decidedBy)}` : ""}
           </p>
         ) : null}
+        <SavedRecommendation dispute={d} />
       </div>
     );
   }
@@ -183,5 +190,71 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
         {body}
       </CardContent>
     </Card>
+  );
+}
+
+function FightOrAcceptHelper({ amountCents, currency, pWin, onPWin }: { amountCents: number; currency: string; pWin: string; onPWin: (v: string) => void }) {
+  const pct = pWin.trim() === "" ? null : Number(pWin);
+  const a = pct === null ? null : assessFightOrAccept(amountCents, currency, pct);
+  const money = (c: number) => formatMoney(c, currency);
+  return (
+    <section aria-label="Fight or accept" className="rounded-lg border border-zinc-200 p-3 text-sm">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <span className="font-medium">Fight or accept</span>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          P(win)
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={100}
+            step={1}
+            value={pWin}
+            onChange={(e) => onPWin(e.target.value)}
+            aria-label="Probability of winning, percent"
+            className="h-8 w-20 rounded-md border border-zinc-200 px-2 text-right text-sm text-foreground tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-indigo-600"
+          />
+          %
+        </label>
+        {a ? (
+          <Pill tone={a.recommendation === "FIGHT" ? "indigo" : "grey"}>Recommended: {RECOMMENDATION_LABELS[a.recommendation]}</Pill>
+        ) : null}
+      </div>
+      {currency !== NETWORK.feeCurrency ? (
+        <p className="text-xs text-muted-foreground">No recommendation: the network&apos;s fees are in {NETWORK.feeCurrency}.</p>
+      ) : pct === null ? (
+        <p className="text-xs text-muted-foreground">Enter your estimate of the chance to win pre-arbitration (0–100) to see the expected value.</p>
+      ) : !a ? (
+        <p className="text-xs text-red-700">P(win) must be a whole number from 0 to 100.</p>
+      ) : (
+        <dl className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-1 text-xs tabular-nums">
+          <dt className="text-muted-foreground">Expected recovery</dt>
+          <dd className="text-muted-foreground">{a.pWinPct}% × {money(amountCents)}</dd>
+          <dd className="text-right">{money(a.expectedRecoveryCents)}</dd>
+          <dt className="text-muted-foreground">Expected cost</dt>
+          <dd className="text-muted-foreground">
+            {money(a.preArbFeeCents)} pre-arb fee + {100 - a.pWinPct}% × {money(NETWORK.arbitrationFeeCents)} arbitration + {money(a.handlingCostCents)} handling
+          </dd>
+          <dd className="text-right">−{money(a.expectedCostCents)}</dd>
+          <dt className="font-medium">Expected value</dt>
+          <dd className="text-muted-foreground">fight if above $0.00</dd>
+          <dd className={cn("text-right font-medium", a.expectedValueCents > 0 ? "text-emerald-700" : "text-red-700")}>{formatSignedMoney(a.expectedValueCents, currency)}</dd>
+        </dl>
+      )}
+      <p className="mt-2 text-xs text-muted-foreground">A recommendation from the numbers above only. You choose the decision.</p>
+    </section>
+  );
+}
+
+function SavedRecommendation({ dispute: d }: { dispute: DisputeView }) {
+  if (d.pWinPct === null || d.expectedValueCents === null || !d.recommendation) return null;
+  const follows = d.decisionType ? followsRecommendation(d.decisionType, d.recommendation) : null;
+  return (
+    <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <span>
+        P(win) {d.pWinPct}% · expected value {formatSignedMoney(d.expectedValueCents, d.currency)} · recommended: {RECOMMENDATION_LABELS[d.recommendation] ?? d.recommendation}
+      </span>
+      {follows === null ? null : follows ? <Pill tone="green">Follows recommendation</Pill> : <Pill tone="amber">Differs from recommendation</Pill>}
+    </p>
   );
 }
