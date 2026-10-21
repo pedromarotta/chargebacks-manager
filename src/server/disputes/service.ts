@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Dispute } from "@prisma/client";
 import { z } from "zod";
+import { assessFightOrAccept } from "@/lib/fight-or-accept";
 import { prisma, type Tx } from "../db";
 import { DECISION_TYPES, isDecisionType, isStatus, type Actor, type Status } from "../domain";
 import { ok, refusal, type Refusal, type RefusalCode, type Result } from "../errors";
@@ -44,7 +45,11 @@ const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
 const DisputeId = z.string().min(1).max(40);
 const Note = z.string().max(2000);
 
-export const ProposeInput = z.object({ decisionType: z.enum(DECISION_TYPES), note: Note.optional() });
+export const ProposeInput = z.object({
+  decisionType: z.enum(DECISION_TYPES),
+  note: Note.optional(),
+  pWinPct: z.number().int().min(0).max(100).optional(),
+});
 export const ApproveInput = z.object({ comment: Note.optional() }).optional();
 export const RejectInput = z.object({ note: Note.optional() });
 export const EvidenceInput = z.object({ key: z.string().min(1).max(40), checked: z.boolean() });
@@ -157,6 +162,9 @@ function decisionSnapshot(d: Dispute): Record<string, unknown> {
     proposedBy: d.proposedBy,
     proposalNote: d.proposalNote,
     provisionalCreditCents: d.provisionalCreditCents,
+    pWinPct: d.pWinPct,
+    expectedValueCents: d.expectedValueCents,
+    recommendation: d.recommendation,
   };
 }
 
@@ -224,8 +232,10 @@ export async function proposeDecision(
     const d = await loadCase(w, disputeId, now);
     if (isRefusal(d)) return d;
     const parsed = ProposeInput.safeParse(input);
-    if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "Choose one of the three decisions." });
-    const { decisionType, note } = parsed.data;
+    if (!parsed.success) {
+      return w.refuse("INVALID_INPUT", { message: "Choose one of the three decisions; P(win) must be a whole number from 0 to 100." });
+    }
+    const { decisionType, note, pWinPct } = parsed.data;
 
     if (statusOf(d) !== "REPRESENTMENT_RECEIVED") {
       return w.refuse("INVALID_STATUS", {
@@ -239,11 +249,18 @@ export async function proposeDecision(
     }
     if (!isValidNote(note)) return w.refuse("NOTE_TOO_SHORT", { before: { status: d.status }, note });
     const trimmedNote = (note ?? "").trim();
+    // Computed from the amount in the database, never from the request (backlog 0).
+    const assessment = pWinPct === undefined ? null : assessFightOrAccept(d.amountCents, d.currency, pWinPct);
+    const helper = {
+      pWinPct: assessment?.pWinPct ?? null,
+      expectedValueCents: assessment?.expectedValueCents ?? null,
+      recommendation: assessment?.recommendation ?? null,
+    };
 
     if (needsApproval(d.amountCents, d.currency)) {
       const claimed = await w.tx.dispute.updateMany({
         where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
-        data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote },
+        data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper },
       });
       if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
       await record(w.tx, {
@@ -251,7 +268,7 @@ export async function proposeDecision(
         action: "decision_proposed",
         disputeId: d.id,
         before: { status: d.status },
-        after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id },
+        after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, ...helper },
         note: trimmedNote,
       });
       return ok(await reload(w.tx, d.id));
@@ -265,6 +282,7 @@ export async function proposeDecision(
         decisionType,
         proposedBy: w.actor.id,
         proposalNote: trimmedNote,
+        ...helper,
         decidedBy: w.actor.id,
         decidedAt: now,
         ...(outcome.reverseCredit ? { provisionalCreditCents: 0 } : {}),
@@ -379,6 +397,9 @@ export async function rejectDecision(
         decidedBy: null,
         decidedAt: null,
         decisionNote: null,
+        pWinPct: null,
+        expectedValueCents: null,
+        recommendation: null,
       },
     });
     if (decided.count !== 1) return w.refuse("ALREADY_DECIDED", { before: { status: d.status } });
