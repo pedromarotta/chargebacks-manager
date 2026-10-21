@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { BulkCheckbox, BulkSelectAll, BulkWriteOff } from "@/components/disputes/bulk-write-off";
 import { ClientFilter } from "@/components/disputes/client-filter";
 import { DueBadge, StatusBadge } from "@/components/status-badge";
@@ -62,8 +63,18 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
           <h1 className="text-xl font-semibold">Disputes</h1>
           <p className="text-sm text-muted-foreground">Sorted by deadline risk: breached first, then due soonest.</p>
         </div>
+        <div className="flex items-center gap-4">
+        {can(user, "export") ? (
+          <a
+            href={`/api/export/queue?${new URLSearchParams({ ...(tab !== "all" ? { tab } : {}), ...(client ? { client } : {}) })}`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-indigo-600 outline-none"
+          >
+            <Download className="size-3.5" aria-hidden /> Export CSV
+          </a>
+        ) : null}
         <div className="text-sm text-muted-foreground" data-testid="network-calls">
           Network calls: <span className="font-semibold text-zinc-900 tabular-nums">{networkCalls}</span>
+        </div>
         </div>
       </div>
 

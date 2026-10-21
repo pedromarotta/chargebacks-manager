@@ -84,6 +84,7 @@ const ACTION_LABELS: Record<string, string> = {
   representment_received: "Merchant response received",
   decision_proposed: "Proposed a decision",
   memo_edited: "Edited the pre-arbitration memo",
+  data_exported: "Exported a CSV",
   decision_executed: "Decision executed",
   decision_approved: "Approved the decision",
   decision_rejected: "Rejected the decision",
