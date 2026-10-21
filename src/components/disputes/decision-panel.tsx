@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { postJson } from "@/lib/api-client";
 import { assessFightOrAccept, followsRecommendation } from "@/lib/fight-or-accept";
 import { NETWORK } from "@/lib/network-config";
+import { draftPreArbMemo, MERCHANT_TYPE_LABELS, MERCHANT_TYPES, type MerchantType } from "@/lib/pre-arb-memo";
 import { DECISION_LABELS, RECOMMENDATION_LABELS, STATUS_LABELS, formatDateTime, formatMoney, formatSignedMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { DisputeView } from "@/server/disputes/view";
@@ -18,6 +19,7 @@ import { ShieldCheck } from "lucide-react";
 
 interface Props {
   dispute: DisputeView;
+  userId: string;
   names: Record<string, string>;
   perms: { file: boolean; propose: boolean; decide: boolean };
   missingEvidence: string[];
@@ -27,13 +29,18 @@ interface Props {
 
 type Choice = "ACCEPT_LOSS_WRITE_OFF" | "ACCEPT_LOSS_REVERSE_CREDIT" | "ESCALATE_PRE_ARB";
 
-export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needsApproval, preArbFee }: Props) {
+export function DecisionPanel({ dispute: d, userId, names, perms, missingEvidence, needsApproval, preArbFee }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
   const [note, setNote] = useState("");
   const [pWin, setPWin] = useState("");
+  const [merchantType, setMerchantType] = useState<MerchantType>("PHYSICAL_GOODS");
+  const [memo, setMemo] = useState<string | null>(null);
+  const [memoEdit, setMemoEdit] = useState(d.preArbMemo ?? "");
+  const facts = { id: d.id, merchant: d.merchant, amount: formatMoney(d.amountCents, d.currency), cardLast4: d.cardLast4, reasonCode: d.reasonCode, merchantResponse: d.merchantResponse };
+  const memoText = memo ?? draftPreArbMemo(facts, merchantType);
 
   async function act(action: string, body: unknown, success: string) {
     setBusy(action);
@@ -86,7 +93,7 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
             return;
           }
           const pWinPct = pWin.trim() === "" ? undefined : Number(pWin);
-          void act("propose", { decisionType: choice, note, pWinPct }, needsApproval ? "Decision proposed. It now needs a lead's approval." : "Decision executed.");
+          void act("propose", { decisionType: choice, note, pWinPct, ...(choice === "ESCALATE_PRE_ARB" ? { merchantType, memo: memoText } : {}) }, needsApproval ? "Decision proposed. It now needs a lead's approval." : "Decision executed.");
         }}
       >
         <FightOrAcceptHelper amountCents={d.amountCents} currency={d.currency} pWin={pWin} onPWin={setPWin} />
@@ -115,6 +122,34 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
             </label>
           ))}
         </fieldset>
+        {choice === "ESCALATE_PRE_ARB" ? (
+          <section aria-label="Pre-arbitration memo" className="flex flex-col gap-2 rounded-lg border border-zinc-200 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium">Pre-arbitration memo</span>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                Merchant type
+                <select
+                  value={merchantType}
+                  onChange={(e) => setMerchantType(e.target.value as MerchantType)}
+                  className="h-8 rounded-md border border-zinc-200 px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-indigo-600"
+                >
+                  {MERCHANT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {MERCHANT_TYPE_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {memo !== null ? (
+                <button type="button" onClick={() => setMemo(null)} className="ml-auto text-xs text-indigo-700 hover:underline">
+                  Reset to template
+                </button>
+              ) : null}
+            </div>
+            <Textarea aria-label="Memo text" value={memoText} onChange={(e) => setMemo(e.target.value)} rows={9} className="font-mono text-xs" />
+            <p className="text-xs text-muted-foreground">Drafted from the {d.reasonCode.toLowerCase().replace(/_/g, " ")} template. Edit freely; it&apos;s saved with the proposal and shown to the approver.</p>
+          </section>
+        ) : null}
         <label className="flex flex-col gap-1 text-sm">
           <span className="font-medium">Note</span>
           <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why this decision? At least 10 characters." rows={3} />
@@ -139,6 +174,16 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
           <p className="text-xs text-muted-foreground">Proposed by {name(d.proposedBy)}</p>
           {d.proposalNote ? <p className="mt-2 whitespace-pre-wrap">“{d.proposalNote}”</p> : null}
           <SavedRecommendation dispute={d} />
+          <MemoView
+            memo={d.preArbMemo}
+            merchantType={d.merchantType}
+            open
+            editable={d.status === "DECISION_PENDING" && d.proposedBy === userId}
+            value={memoEdit}
+            onChange={setMemoEdit}
+            onSave={() => act("memo", { memo: memoEdit }, "Memo saved.")}
+            busy={busy !== null}
+          />
         </div>
         {perms.decide ? (
           <>
@@ -161,7 +206,12 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
   } else if (d.status === "CHARGEBACK_FILED") {
     body = <p className="text-sm text-muted-foreground">Filed with the network. Waiting for the merchant&apos;s response.</p>;
   } else if (d.status === "PRE_ARB_FILED") {
-    body = <p className="text-sm text-muted-foreground">Pre-arbitration filed. Waiting for the network&apos;s ruling.</p>;
+    body = (
+      <div className="text-sm">
+        <p className="text-muted-foreground">Pre-arbitration filed. Waiting for the network&apos;s ruling.</p>
+        <MemoView memo={d.preArbMemo} merchantType={d.merchantType} />
+      </div>
+    );
   } else {
     body = (
       <div className="flex flex-col gap-1 text-sm">
@@ -176,6 +226,7 @@ export function DecisionPanel({ dispute: d, names, perms, missingEvidence, needs
           </p>
         ) : null}
         <SavedRecommendation dispute={d} />
+        <MemoView memo={d.preArbMemo} merchantType={d.merchantType} />
       </div>
     );
   }
@@ -256,5 +307,36 @@ function SavedRecommendation({ dispute: d }: { dispute: DisputeView }) {
       </span>
       {follows === null ? null : follows ? <Pill tone="green">Follows recommendation</Pill> : <Pill tone="amber">Differs from recommendation</Pill>}
     </p>
+  );
+}
+
+function MemoView(props: {
+  memo: string | null;
+  merchantType: string | null;
+  open?: boolean;
+  editable?: boolean;
+  value?: string;
+  onChange?: (v: string) => void;
+  onSave?: () => void;
+  busy?: boolean;
+}) {
+  if (!props.memo) return null;
+  const type = props.merchantType ? MERCHANT_TYPE_LABELS[props.merchantType as MerchantType] ?? props.merchantType : null;
+  return (
+    <details open={props.open || undefined} className="mt-3 rounded-md border border-zinc-200 bg-white p-2 text-xs">
+      <summary className="cursor-pointer font-medium">Pre-arbitration memo{type ? ` · ${type}` : ""}</summary>
+      {props.editable ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <Textarea aria-label="Edit memo" value={props.value} onChange={(e) => props.onChange?.(e.target.value)} rows={9} className="font-mono text-xs" />
+          <div>
+            <Button size="sm" variant="outline" onClick={props.onSave} disabled={props.busy || props.value?.trim() === props.memo}>
+              Save memo
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 whitespace-pre-wrap font-mono">{props.memo}</p>
+      )}
+    </details>
   );
 }

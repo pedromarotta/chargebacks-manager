@@ -63,6 +63,14 @@ Analysts and leads can attach files to evidence items while the case is still op
 - Each upload writes one `evidence_file_attached` history row with the file name, size and SHA-256. Refusals write a row too.
 - `POST /api/disputes/:id/files` takes multipart `key` + `file` and requires the header `x-cbm-upload: 1`, which blocks cross-site form posts. `GET /api/disputes/:id/files/:fileId` always downloads the file as an attachment.
 
+## Pre-arbitration memo
+
+When an analyst chooses *Escalate to pre-arbitration*, the decision panel drafts a memo from a template for the case's reason code (`src/lib/pre-arb-memo.ts`). The analyst picks the merchant type (physical goods, digital service, service provider or financial service) and the wording adapts to it. For example, a digital-service memo asks for access logs, not proof of delivery. The memo is editable before proposing and is saved with the proposal.
+
+- While the escalation waits for approval, only the proposer can edit the memo (`POST /api/disputes/:id/memo {"memo": "..."}`). Each edit writes a `memo_edited` history row with the old and new text. The approver reads the memo but can't change it, so the person who approves never wrote the text (maker-checker).
+- Memos need at least 10 characters, can be at most 5,000, and are refused if they contain a full card number. If an API call escalates without a memo, the template draft for physical goods is saved.
+- Rejecting the decision clears the memo. Approving keeps it on the case.
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.

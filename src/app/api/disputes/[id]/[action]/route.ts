@@ -1,5 +1,6 @@
 import {
   approveDecision,
+  editMemo,
   fileChargeback,
   proposeDecision,
   rejectDecision,
@@ -17,6 +18,7 @@ const ACTIONS: Record<string, Handler> = {
   approve: (actor, id, body) => approveDecision(actor, id, body),
   reject: (actor, id, body) => rejectDecision(actor, id, body),
   evidence: (actor, id, body) => setEvidence(actor, id, body),
+  memo: (actor, id, body) => editMemo(actor, id, body),
 };
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string; action: string }> }) {

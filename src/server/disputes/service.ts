@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { Dispute } from "@prisma/client";
 import { z } from "zod";
 import { assessFightOrAccept } from "@/lib/fight-or-accept";
+import { formatMoney } from "@/lib/format";
+import { draftPreArbMemo, MEMO_MAX_LENGTH, MEMO_MIN_LENGTH, MERCHANT_TYPES } from "@/lib/pre-arb-memo";
 import { prisma, type Tx } from "../db";
 import { DECISION_TYPES, isDecisionType, isStatus, type Actor, type Status } from "../domain";
 import { ok, refusal, type Refusal, type RefusalCode, type Result } from "../errors";
 import { record, type HistoryAction } from "../history";
 import { cleanFilename, fileContainsCardNumber, MAX_FILE_BYTES, removeStoredFile, sha256Hex, sniffType, storeFile } from "../files";
-import { parseDisputeFile, type ValidDisputeRow } from "../import";
+import { containsCardNumber, parseDisputeFile, type ValidDisputeRow } from "../import";
 import { idempotencyKeyFor, submit } from "../network";
 import { can, type Action } from "../policy";
 import {
@@ -28,7 +30,7 @@ import { toDisputeView, toEvidenceFileView, type DisputeView, type EvidenceFileV
 
 const TX_OPTIONS = { maxWait: 15_000, timeout: 15_000 };
 
-export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "import" | "representment" | "ruling";
+export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "import" | "representment" | "ruling";
 
 const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   file: "dispute:file",
@@ -37,6 +39,7 @@ const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   reject: "decision:reject",
   evidence: "evidence:edit",
   attach: "evidence:edit",
+  memo: "decision:propose",
   import: "dispute:import",
   representment: "network:event",
   ruling: "network:event",
@@ -51,7 +54,10 @@ export const ProposeInput = z.object({
   decisionType: z.enum(DECISION_TYPES),
   note: Note.optional(),
   pWinPct: z.number().int().min(0).max(100).optional(),
+  merchantType: z.enum(MERCHANT_TYPES).optional(),
+  memo: z.string().max(MEMO_MAX_LENGTH).optional(),
 });
+export const MemoInput = z.object({ memo: z.string().max(MEMO_MAX_LENGTH) });
 export const ApproveInput = z.object({ comment: Note.optional() }).optional();
 export const RejectInput = z.object({ note: Note.optional() });
 export const EvidenceInput = z.object({ key: z.string().min(1).max(40), checked: z.boolean() });
@@ -172,7 +178,26 @@ function decisionSnapshot(d: Dispute): Record<string, unknown> {
     pWinPct: d.pWinPct,
     expectedValueCents: d.expectedValueCents,
     recommendation: d.recommendation,
+    merchantType: d.merchantType,
+    preArbMemo: d.preArbMemo,
   };
+}
+
+function memoFacts(d: Dispute) {
+  return {
+    id: d.id,
+    merchant: d.merchant,
+    amount: formatMoney(d.amountCents, d.currency),
+    cardLast4: d.cardLast4,
+    reasonCode: d.reasonCode,
+    merchantResponse: d.merchantResponse,
+  };
+}
+
+function memoProblem(text: string): string | null {
+  if (text.replace(/\s/g, "").length < MEMO_MIN_LENGTH) return "The memo needs at least 10 characters.";
+  if (containsCardNumber(text)) return "The memo appears to contain a full card number. Use the last 4 digits only.";
+  return null;
 }
 
 function statusOf(d: Dispute): Status {
@@ -263,11 +288,20 @@ export async function proposeDecision(
       expectedValueCents: assessment?.expectedValueCents ?? null,
       recommendation: assessment?.recommendation ?? null,
     };
+    // Backlog 3: escalations carry a pre-arbitration memo; without one, the template draft is used.
+    let memo: { merchantType: string | null; preArbMemo: string | null } = { merchantType: null, preArbMemo: null };
+    if (decisionType === "ESCALATE_PRE_ARB") {
+      const merchantType = parsed.data.merchantType ?? "PHYSICAL_GOODS";
+      const text = (parsed.data.memo ?? "").trim() || draftPreArbMemo(memoFacts(d), merchantType);
+      const problem = memoProblem(text);
+      if (problem) return w.refuse("INVALID_INPUT", { message: problem, before: { status: d.status } });
+      memo = { merchantType, preArbMemo: text };
+    }
 
     if (needsApproval(d.amountCents, d.currency)) {
       const claimed = await w.tx.dispute.updateMany({
         where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
-        data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper },
+        data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper, ...memo },
       });
       if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
       await record(w.tx, {
@@ -275,7 +309,7 @@ export async function proposeDecision(
         action: "decision_proposed",
         disputeId: d.id,
         before: { status: d.status },
-        after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, ...helper },
+        after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, ...helper, ...memo },
         note: trimmedNote,
       });
       return ok(await reload(w.tx, d.id));
@@ -290,6 +324,7 @@ export async function proposeDecision(
         proposedBy: w.actor.id,
         proposalNote: trimmedNote,
         ...helper,
+        ...memo,
         decidedBy: w.actor.id,
         decidedAt: now,
         ...(outcome.reverseCredit ? { provisionalCreditCents: 0 } : {}),
@@ -407,6 +442,8 @@ export async function rejectDecision(
         pWinPct: null,
         expectedValueCents: null,
         recommendation: null,
+        merchantType: null,
+        preArbMemo: null,
       },
     });
     if (decided.count !== 1) return w.refuse("ALREADY_DECIDED", { before: { status: d.status } });
@@ -537,6 +574,42 @@ export async function attachEvidenceFile(
     if (storedKey) await removeStoredFile(storedKey);
     throw err;
   }
+}
+
+/** Backlog 3: the proposer edits the pre-arbitration memo while the escalation waits for approval. */
+export async function editMemo(actor: Actor | null, disputeId: unknown, input: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "memo", String(disputeId), async (w) => {
+    const d = await loadCase(w, disputeId, now);
+    if (isRefusal(d)) return d;
+    const parsed = MemoInput.safeParse(input);
+    if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "The memo can be at most 5,000 characters." });
+    if (d.status !== "DECISION_PENDING" || d.decisionType !== "ESCALATE_PRE_ARB") {
+      return w.refuse("INVALID_STATUS", {
+        message: "The memo can only be edited while an escalation is waiting for approval.",
+        before: { status: d.status },
+      });
+    }
+    if (d.proposedBy !== w.actor.id) {
+      return w.refuse("ROLE_NOT_ALLOWED", { message: "Only the person who proposed the escalation can edit its memo." });
+    }
+    const text = parsed.data.memo.trim();
+    const problem = memoProblem(text);
+    if (problem) return w.refuse("INVALID_INPUT", { message: problem });
+    if (text === d.preArbMemo) return ok(toDisputeView(d));
+    const updated = await w.tx.dispute.updateMany({
+      where: { id: d.id, status: "DECISION_PENDING", proposedBy: w.actor.id },
+      data: { preArbMemo: text, updatedAt: now },
+    });
+    if (updated.count !== 1) return w.refuse("ALREADY_DECIDED", { message: "This decision was just made; the memo can't change now." });
+    await record(w.tx, {
+      actor: w.actor,
+      action: "memo_edited",
+      disputeId: d.id,
+      before: { preArbMemo: d.preArbMemo },
+      after: { preArbMemo: text },
+    });
+    return ok(await reload(w.tx, d.id));
+  });
 }
 
 // ---------- Import (R10) ----------
