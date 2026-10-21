@@ -2,12 +2,17 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 /** POSTs JSON to our API and returns either the data or a plain-language refusal message. */
 export async function postJson<T>(url: string, body: unknown, method = "POST"): Promise<ApiResult<T>> {
+  return send<T>(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+}
+
+/** Uploads a multipart form. The custom header can't be sent cross-site without CORS, which blocks forged form posts. */
+export async function postForm<T>(url: string, form: FormData): Promise<ApiResult<T>> {
+  return send<T>(url, { method: "POST", headers: { "x-cbm-upload": "1" }, body: form });
+}
+
+async function send<T>(url: string, init: RequestInit): Promise<ApiResult<T>> {
   try {
-    const res = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body ?? {}),
-    });
+    const res = await fetch(url, init);
     const json: unknown = await res.json().catch(() => null);
     if (res.ok) return { ok: true, data: json as T };
     const message =

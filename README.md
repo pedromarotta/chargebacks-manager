@@ -53,6 +53,16 @@ The analyst still chooses. The server recomputes P(win), the expected value and 
 - win and loss rate on closed cases (written off and expired count as losses)
 - how often the decided action matched the fight-or-accept recommendation (only decisions saved with a P(win))
 
+## Evidence files
+
+Analysts and leads can attach files to evidence items while the case is still open for evidence (New, Chargeback filed, Representment received). Everyone, auditors included, can download them. The code is in `src/server/files.ts` and `attachEvidenceFile()`.
+
+- Storage is local, in `UPLOAD_DIR` (default `./uploads`, gitignored, cleared by `npm run reset`). Files are saved under a random UUID, never under the uploaded name.
+- Accepted: PDF, PNG and JPEG, detected from the file's bytes, up to 5 MB.
+- Files with a full card number in the name or readable text are refused. This is best effort: compressed PDF text and images can't be scanned, so redact before uploading.
+- Each upload writes one `evidence_file_attached` history row with the file name, size and SHA-256. Refusals write a row too.
+- `POST /api/disputes/:id/files` takes multipart `key` + `file` and requires the header `x-cbm-upload: 1`, which blocks cross-site form posts. `GET /api/disputes/:id/files/:fileId` always downloads the file as an attachment.
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.

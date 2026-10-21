@@ -3,7 +3,7 @@ import { getCurrentUser } from "./auth";
 import type { Actor } from "./domain";
 import { refusal, type Result } from "./errors";
 
-function refusalResponse(code: Parameters<typeof refusal>[0], message?: string) {
+export function refusalResponse(code: Parameters<typeof refusal>[0], message?: string) {
   const r = refusal(code, message);
   return NextResponse.json({ error: { code: r.code, message: r.message } }, { status: r.httpStatus });
 }

@@ -154,3 +154,4 @@ vite.config.ts.timestamp-*
 /.tmp
 /samples/disputes-today.csv
 /test-results
+/uploads

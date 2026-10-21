@@ -67,6 +67,7 @@ const ATTEMPT_LABELS: Record<string, string> = {
   approve: "approve the decision",
   reject: "reject the decision",
   evidence: "change evidence",
+  attach: "attach a file",
   import: "import a file",
   representment: "record a merchant response",
   ruling: "record a ruling",
@@ -76,6 +77,7 @@ const ACTION_LABELS: Record<string, string> = {
   import_batch: "Imported the daily file",
   evidence_checked: "Checked evidence",
   evidence_unchecked: "Unchecked evidence",
+  evidence_file_attached: "Attached a file",
   chargeback_filed: "Filed the chargeback",
   representment_received: "Merchant response received",
   decision_proposed: "Proposed a decision",
@@ -106,6 +108,12 @@ export function historyTitle(h: HistoryLike): string {
 
 function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export const RECOMMENDATION_LABELS: Record<string, string> = { FIGHT: "fight", ACCEPT: "accept" };
@@ -144,6 +152,8 @@ export function historyChanges(h: HistoryLike, currency = "USD"): string[] {
   }
   const label = str(after.label);
   if (label) out.push(label);
+  const filename = str(after.filename);
+  if (filename && typeof after.sizeBytes === "number") out.push(`${filename} · ${formatBytes(after.sizeBytes)}`);
   const message = str(after.networkMessage);
   if (message) out.push(`Network message sent: ${message}`);
   return out;
