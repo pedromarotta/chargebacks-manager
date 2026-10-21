@@ -88,6 +88,10 @@ Auditors get an *Export CSV* button on the queue and on the history page. Both e
 - Files download as `text/csv` attachments with `no-store`. Cells are RFC 4180 quoted. A cell that starts with `= + - @` gets a leading `'` so spreadsheets won't run it as a formula. As a last line of defense, anything that looks like a full card number is replaced with `[card number removed]`.
 - Each export writes a `data_exported` history row recording who exported, what, how many rows and which filters.
 
+## Due-soon digest
+
+*Due soon* in the sidebar, with a count badge, lists every open case due within 48 hours, including open cases already past due that haven't been expired yet. Cases are grouped into past due, the next 24 hours and 24–48 hours, then sorted by deadline risk. Each row shows the next step and a *Needs you* tag when the current user can take it. For example, a lead sees "Approve or reject" on a pending decision unless they proposed it. `getDueSoonDigest()` is read-only: opening the page never writes or expires anything (R1 expiry still only happens when someone acts on a case). It's in-app only, so no email is sent.
+
 ## Card number audit
 
 `tests/pan-audit.test.ts` is the proof that a full card number can't be stored, returned or exported. Using four card-number formats (plain, spaced, dashed, Amex), it sends a PAN through every write path: import fields, the import filename, decision notes, approve and reject notes, memos, bulk notes and ids, representment text, evidence keys, file names and file bytes, and case ids in the URL. Then it:
