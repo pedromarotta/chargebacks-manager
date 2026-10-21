@@ -74,6 +74,12 @@ const ATTEMPT_LABELS: Record<string, string> = {
   import: "import a file",
   representment: "record a merchant response",
   ruling: "record a ruling",
+  filing_rejected: "record a rejected filing",
+  funds_received: "record funds received",
+  funds_program: "credit funds to the program",
+  funds_propose: "propose a funds move",
+  funds_approve: "approve a funds move",
+  funds_reject: "reject a funds move",
 };
 
 const ACTION_LABELS: Record<string, string> = {
