@@ -110,6 +110,16 @@ This covers BUSINESS_RULES §5 for won cases where the cardholder had no provisi
 - Funds are parked from receipt until they're credited to the cardholder or reversed. The `/funds` page groups parked funds by age (<24h, 1–3d, 3–7d, >7d, over the limit) and flags each case against its jurisdiction's limit minus the buffer (`JURISDICTION_LIMITS` in `src/lib/funds.ts`, illustrative). The sidebar badge counts alerts.
 - Each case's `jurisdiction` defaults to `US`. Seeds CB-1008 (BR, over the limit) and CB-1009 (MX, within the limit) show both.
 
+## Network outbox
+
+Calls to the simulated network no longer happen inside the database transaction.
+
+- In the transaction, `enqueue()` in `src/server/network.ts` writes an `OutboxMessage` row (`PENDING`), keyed by `idempotencyKey = <case_id>:<message>`, together with the business change and its history row. If the write is refused or rolled back, no message is queued.
+- After the commit, `deliverOutbox()` sends each pending row with its key. The simulated network keeps its own record (`NetworkCall`), dedupes by key and returns the original `network_ref` on a repeat.
+- A timeout leaves the row `PENDING` with `attempts` and `last_error` set. `npm run outbox` retries all pending rows, and so does the next write. Retrying is always safe: a timeout followed by a retry, or several retries at once, still leaves exactly one record on the network side (`tests/outbox.test.ts`).
+- `dispute.network_ref` is set when the `CHARGEBACK` message is acknowledged. History records `networkMessage` and not the ref, because the ref doesn't exist yet at commit time.
+- The queue's network-call counter shows how many messages are still pending.
+
 ## Card number audit
 
 `tests/pan-audit.test.ts` is the proof that a full card number can't be stored, returned or exported. Using four card-number formats (plain, spaced, dashed, Amex), it sends a PAN through every write path: import fields, the import filename, decision notes, approve and reject notes, memos, bulk notes and ids, representment text, evidence keys, file names and file bytes, and case ids in the URL. Then it:

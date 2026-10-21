@@ -11,7 +11,7 @@ import { ok, refusal, type Refusal, type RefusalCode, type Result } from "../err
 import { record, type HistoryAction } from "../history";
 import { cleanFilename, fileContainsCardNumber, MAX_FILE_BYTES, removeStoredFile, sha256Hex, sniffType, storeFile } from "../files";
 import { containsCardNumber, parseDisputeFile, type ValidDisputeRow } from "../import";
-import { idempotencyKeyFor, submit } from "../network";
+import { deliverOutbox, enqueue, idempotencyKeyFor } from "../network";
 import { can, type Action } from "../policy";
 import {
   ARBITRATION_WINDOW_DAYS,
@@ -137,7 +137,19 @@ async function inWrite<T>(
   body: (w: Writer) => Promise<Result<T>>,
 ): Promise<Result<T>> {
   if (!actor) return unauthenticated(attempted);
-  return prisma.$transaction((tx) => body(new Writer(tx, actor, attempted, requestedId)), TX_OPTIONS);
+  const result = await prisma.$transaction((tx) => body(new Writer(tx, actor, attempted, requestedId)), TX_OPTIONS);
+  await deliverAfterCommit();
+  return result;
+}
+
+/** Backlog 10: the network is called only after the transaction commits. Failures stay queued for `npm run outbox`. */
+export async function deliverAfterCommit(): Promise<void> {
+  try {
+    const { failed } = await deliverOutbox();
+    if (failed > 0) console.warn(`[outbox] ${failed} message(s) still pending`);
+  } catch (e) {
+    console.warn("[outbox] delivery failed; messages stay pending", e);
+  }
 }
 
 /**
@@ -251,18 +263,17 @@ export async function fileChargeback(actor: Actor | null, disputeId: unknown, no
     });
     if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case was already filed." });
 
-    const sent = await submit(w.tx, {
+    await enqueue(w.tx, {
       idempotencyKey: idempotencyKeyFor(d.id, "CHARGEBACK"),
       disputeId: d.id,
       message: "CHARGEBACK",
     });
-    await w.tx.dispute.update({ where: { id: d.id }, data: { networkRef: sent.networkRef } });
     await record(w.tx, {
       actor: w.actor,
       action: "chargeback_filed",
       disputeId: d.id,
       before: { status: d.status, dueAt: d.dueAt.toISOString() },
-      after: { status: "CHARGEBACK_FILED", dueAt: dueAt.toISOString(), networkRef: sent.networkRef },
+      after: { status: "CHARGEBACK_FILED", dueAt: dueAt.toISOString(), networkMessage: "CHARGEBACK" },
     });
     return ok(await reload(w.tx, d.id));
   });
@@ -361,7 +372,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
     },
   });
   if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
-  const sent = d.filingRejectedAt ? null : await submit(w.tx, {
+  const sent = d.filingRejectedAt ? null : await enqueue(w.tx, {
     idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
     disputeId: d.id,
     message: outcome.message,
@@ -372,7 +383,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
     action: "decision_executed",
     disputeId: d.id,
     before: decisionSnapshot(d),
-    after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null, networkRef: sent?.networkRef ?? null, ...(w.bulkId ? { bulkId: w.bulkId } : {}) },
+    after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null, ...(w.bulkId ? { bulkId: w.bulkId } : {}) },
     note: trimmedNote,
   });
   return ok(toDisputeView(after));
@@ -418,7 +429,7 @@ export async function approveDecision(
     });
     if (decided.count !== 1) return w.refuse("ALREADY_DECIDED", { before: { status: d.status } });
 
-    const sent = d.filingRejectedAt ? null : await submit(w.tx, {
+    const sent = d.filingRejectedAt ? null : await enqueue(w.tx, {
       idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
       disputeId: d.id,
       message: outcome.message,
@@ -429,7 +440,7 @@ export async function approveDecision(
       action: "decision_approved",
       disputeId: d.id,
       before: decisionSnapshot(d),
-      after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null, networkRef: sent?.networkRef ?? null },
+      after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null },
       note: comment,
     });
     return ok(toDisputeView(after));

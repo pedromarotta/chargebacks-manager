@@ -108,6 +108,22 @@ model NetworkCall {
   dispute Dispute @relation(fields: [disputeId], references: [id])
 }
 
+/// Backlog 10: written in the same transaction as the business change; delivered to the network after commit.
+model OutboxMessage {
+  id             Int       @id @default(autoincrement())
+  idempotencyKey String    @unique @map("idempotency_key")
+  disputeId      String    @map("dispute_id")
+  message        String // CHARGEBACK | ACCEPT | PRE_ARB
+  status         String    @default("PENDING") // PENDING | SENT
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  networkRef     String?   @map("network_ref")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  sentAt         DateTime? @map("sent_at")
+
+  @@index([status])
+}
+
 model History {
   id        Int      @id @default(autoincrement())
   at        DateTime @default(now())

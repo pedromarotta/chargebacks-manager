@@ -41,7 +41,7 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
   const now = new Date();
   const result = await getQueue(user, { tab, client }, now);
   if (!result.ok) return <p className="text-sm">{result.message}</p>;
-  const { rows, clients, stats, networkCalls, tabCounts } = result.value;
+  const { rows, clients, stats, networkCalls, outboxPending, tabCounts } = result.value;
   const canBulk = can(user, "decision:propose");
   const bulkCandidates = canBulk
     ? rows
@@ -74,6 +74,7 @@ export default async function DisputesPage({ searchParams }: { searchParams: Pro
         ) : null}
         <div className="text-sm text-muted-foreground" data-testid="network-calls">
           Network calls: <span className="font-semibold text-zinc-900 tabular-nums">{networkCalls}</span>
+          {outboxPending > 0 ? <span className="ml-1 text-amber-700" data-testid="outbox-pending">({outboxPending} pending, retry with npm run outbox)</span> : null}
         </div>
         </div>
       </div>

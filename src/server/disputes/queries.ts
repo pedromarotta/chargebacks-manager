@@ -37,6 +37,7 @@ export interface Queue {
   clients: string[];
   stats: QueueStats;
   networkCalls: number;
+  outboxPending: number;
   tabCounts: Record<QueueTab, number>;
 }
 
@@ -75,7 +76,11 @@ export async function getQueue(
   if (!can(actor, "dispute:read")) return refusal("ROLE_NOT_ALLOWED");
   const tab = filters.tab ?? "all";
 
-  const [all, networkCalls] = await Promise.all([prisma.dispute.findMany(), prisma.networkCall.count()]);
+  const [all, networkCalls, outboxPending] = await Promise.all([
+    prisma.dispute.findMany(),
+    prisma.networkCall.count(),
+    prisma.outboxMessage.count({ where: { status: "PENDING" } }),
+  ]);
   all.sort((a, b) => compareByDeadlineRisk(a, b, now));
   const views = all.map((d) => toDisputeView(d));
 
@@ -98,7 +103,7 @@ export async function getQueue(
     .map((d) => ({ ...d, risk: isOpen(d.status) ? riskTier(new Date(d.dueAt), now) : null }));
 
   const clients = [...new Set(views.map((d) => d.client))].sort();
-  return ok({ rows, clients, stats, networkCalls, tabCounts });
+  return ok({ rows, clients, stats, networkCalls, outboxPending, tabCounts });
 }
 
 export interface CaseDetail {
