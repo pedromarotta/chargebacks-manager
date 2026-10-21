@@ -61,9 +61,28 @@ model EvidenceItem {
   checkedBy String?   @map("checked_by")
   checkedAt DateTime? @map("checked_at")
 
-  dispute Dispute @relation(fields: [disputeId], references: [id])
+  dispute Dispute        @relation(fields: [disputeId], references: [id])
+  files   EvidenceFile[]
 
   @@unique([disputeId, key])
+}
+
+/// Metadata for an uploaded evidence file; the bytes live in UPLOAD_DIR under storage_key.
+model EvidenceFile {
+  id             Int      @id @default(autoincrement())
+  evidenceItemId Int      @map("evidence_item_id")
+  disputeId      String   @map("dispute_id")
+  filename       String
+  contentType    String   @map("content_type")
+  sizeBytes      Int      @map("size_bytes")
+  sha256         String
+  storageKey     String   @unique @map("storage_key")
+  uploadedBy     String   @map("uploaded_by")
+  uploadedAt     DateTime @map("uploaded_at")
+
+  evidenceItem EvidenceItem @relation(fields: [evidenceItemId], references: [id])
+
+  @@index([disputeId])
 }
 
 model NetworkCall {

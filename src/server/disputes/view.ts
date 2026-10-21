@@ -1,4 +1,4 @@
-import type { Dispute, EvidenceItem, History, NetworkCall } from "@prisma/client";
+import type { Dispute, EvidenceFile, EvidenceItem, History, NetworkCall } from "@prisma/client";
 
 export interface DisputeView {
   id: string;
@@ -34,6 +34,7 @@ export interface EvidenceView {
   checked: boolean;
   checkedBy: string | null;
   checkedAt: string | null;
+  files: EvidenceFileView[];
 }
 
 export interface HistoryView {
@@ -86,7 +87,29 @@ export function toDisputeView(d: Dispute): DisputeView {
   };
 }
 
-export function toEvidenceView(e: EvidenceItem): EvidenceView {
+export interface EvidenceFileView {
+  id: number;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedBy: string;
+  uploadedAt: string;
+}
+
+export function toEvidenceFileView(f: EvidenceFile): EvidenceFileView {
+  return {
+    id: f.id,
+    filename: f.filename,
+    contentType: f.contentType,
+    sizeBytes: f.sizeBytes,
+    sha256: f.sha256,
+    uploadedBy: f.uploadedBy,
+    uploadedAt: f.uploadedAt.toISOString(),
+  };
+}
+
+export function toEvidenceView(e: EvidenceItem & { files?: EvidenceFile[] }): EvidenceView {
   return {
     key: e.key,
     label: e.label,
@@ -94,6 +117,7 @@ export function toEvidenceView(e: EvidenceItem): EvidenceView {
     checked: e.checked,
     checkedBy: e.checkedBy,
     checkedAt: iso(e.checkedAt),
+    files: (e.files ?? []).map(toEvidenceFileView),
   };
 }
 

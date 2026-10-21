@@ -2,14 +2,17 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { CLOSED_STATUSES, OPEN_STATUSES, type Actor } from "../domain";
 import { ok, refusal, type Result } from "../errors";
+import { readStoredFile } from "../files";
 import { can } from "../policy";
 import { compareByDeadlineRisk, isAtRiskOfTimeout, isOpen, riskTier, type RiskTier } from "./rules";
 import {
   toDisputeView,
+  toEvidenceFileView,
   toEvidenceView,
   toHistoryView,
   toNetworkCallView,
   type DisputeView,
+  type EvidenceFileView,
   type EvidenceView,
   type HistoryView,
   type NetworkCallView,
@@ -112,7 +115,7 @@ export async function getCase(actor: Actor | null, id: string, now = new Date())
   const dispute = await prisma.dispute.findUnique({
     where: { id },
     include: {
-      evidence: { orderBy: { id: "asc" } },
+      evidence: { orderBy: { id: "asc" }, include: { files: { orderBy: { id: "asc" } } } },
       history: { orderBy: [{ at: "desc" }, { id: "desc" }] },
       networkCalls: { orderBy: { id: "asc" } },
     },
@@ -125,6 +128,20 @@ export async function getCase(actor: Actor | null, id: string, now = new Date())
     history: dispute.history.map(toHistoryView),
     networkCalls: dispute.networkCalls.map(toNetworkCallView),
   });
+}
+
+export async function getEvidenceFile(
+  actor: Actor | null,
+  disputeId: string,
+  fileId: string,
+): Promise<Result<{ file: EvidenceFileView; bytes: Buffer }>> {
+  if (!actor) return refusal("UNAUTHENTICATED");
+  if (!can(actor, "dispute:read")) return refusal("ROLE_NOT_ALLOWED");
+  const id = /^\d{1,10}$/.test(fileId) ? Number(fileId) : null;
+  const file = id === null ? null : await prisma.evidenceFile.findFirst({ where: { id, disputeId } });
+  const bytes = file ? await readStoredFile(file.storageKey) : null;
+  if (!file || !bytes) return refusal("NOT_FOUND", "That file doesn't exist.");
+  return ok({ file: toEvidenceFileView(file), bytes });
 }
 
 export const HISTORY_FILTERS = ["all", "refusals", "decisions", "imports"] as const;

@@ -6,6 +6,7 @@ import { prisma, type Tx } from "../db";
 import { DECISION_TYPES, isDecisionType, isStatus, type Actor, type Status } from "../domain";
 import { ok, refusal, type Refusal, type RefusalCode, type Result } from "../errors";
 import { record, type HistoryAction } from "../history";
+import { cleanFilename, fileContainsCardNumber, MAX_FILE_BYTES, removeStoredFile, sha256Hex, sniffType, storeFile } from "../files";
 import { parseDisputeFile, type ValidDisputeRow } from "../import";
 import { idempotencyKeyFor, submit } from "../network";
 import { can, type Action } from "../policy";
@@ -23,11 +24,11 @@ import {
   needsApproval,
   outcomeFor,
 } from "./rules";
-import { toDisputeView, type DisputeView } from "./view";
+import { toDisputeView, toEvidenceFileView, type DisputeView, type EvidenceFileView } from "./view";
 
 const TX_OPTIONS = { maxWait: 15_000, timeout: 15_000 };
 
-export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "import" | "representment" | "ruling";
+export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "import" | "representment" | "ruling";
 
 const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   file: "dispute:file",
@@ -35,6 +36,7 @@ const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   approve: "decision:approve",
   reject: "decision:reject",
   evidence: "evidence:edit",
+  attach: "evidence:edit",
   import: "dispute:import",
   representment: "network:event",
   ruling: "network:event",
@@ -53,6 +55,11 @@ export const ProposeInput = z.object({
 export const ApproveInput = z.object({ comment: Note.optional() }).optional();
 export const RejectInput = z.object({ note: Note.optional() });
 export const EvidenceInput = z.object({ key: z.string().min(1).max(40), checked: z.boolean() });
+export const AttachFileInput = z.object({
+  key: z.string().min(1).max(40),
+  filename: z.string().min(1).max(255),
+  bytes: z.instanceof(Uint8Array),
+});
 export const ImportInput = z.object({
   csv: z.string().min(1).max(2_000_000),
   filename: z.string().max(200).optional(),
@@ -460,6 +467,76 @@ export async function setEvidence(
     });
     return ok(await reload(w.tx, d.id));
   });
+}
+
+/**
+ * Attach a file to an evidence item (backlog 2; R5, R9, R10 hygiene). The file is written last,
+ * just before the row and its history entry, and removed again if the transaction fails.
+ */
+export async function attachEvidenceFile(
+  actor: Actor | null,
+  disputeId: unknown,
+  input: unknown,
+  now = new Date(),
+): Promise<Result<EvidenceFileView>> {
+  let storedKey: string | null = null;
+  try {
+    return await inWrite(actor, "attach", String(disputeId), async (w) => {
+      const id = DisputeId.safeParse(disputeId);
+      const d = id.success ? await w.tx.dispute.findUnique({ where: { id: id.data } }) : null;
+      if (d) w.disputeId = d.id;
+      if (!can(w.actor, "evidence:edit")) return w.refuse("ROLE_NOT_ALLOWED");
+      if (!d) return w.refuse("NOT_FOUND");
+      const parsed = AttachFileInput.safeParse(input);
+      if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "Choose a file to attach." });
+      if (!EVIDENCE_EDITABLE.includes(statusOf(d))) {
+        return w.refuse("INVALID_STATUS", { message: "Evidence can't be changed at this step.", before: { status: d.status } });
+      }
+      const item = await w.tx.evidenceItem.findUnique({
+        where: { disputeId_key: { disputeId: d.id, key: parsed.data.key } },
+      });
+      if (!item) return w.refuse("NOT_FOUND", { message: "That evidence item doesn't exist on this case." });
+
+      const { bytes } = parsed.data;
+      if (bytes.byteLength === 0) return w.refuse("INVALID_INPUT", { message: "The file is empty." });
+      if (bytes.byteLength > MAX_FILE_BYTES) return w.refuse("INVALID_INPUT", { message: "The file is larger than 5 MB." });
+      const contentType = sniffType(bytes);
+      if (!contentType) return w.refuse("INVALID_INPUT", { message: "Only PDF, PNG and JPEG files can be attached." });
+      if (fileContainsCardNumber(parsed.data.filename, bytes)) {
+        return w.refuse("INVALID_INPUT", {
+          message: "This file appears to contain a full card number. Redact it to the last 4 digits and attach it again.",
+        });
+      }
+
+      const filename = cleanFilename(parsed.data.filename);
+      const sha256 = sha256Hex(bytes);
+      storedKey = await storeFile(bytes);
+      const file = await w.tx.evidenceFile.create({
+        data: {
+          evidenceItemId: item.id,
+          disputeId: d.id,
+          filename,
+          contentType,
+          sizeBytes: bytes.byteLength,
+          sha256,
+          storageKey: storedKey,
+          uploadedBy: w.actor.id,
+          uploadedAt: now,
+        },
+      });
+      await w.tx.dispute.update({ where: { id: d.id }, data: { updatedAt: now } });
+      await record(w.tx, {
+        actor: w.actor,
+        action: "evidence_file_attached",
+        disputeId: d.id,
+        after: { key: item.key, label: item.label, fileId: file.id, filename, contentType, sizeBytes: bytes.byteLength, sha256 },
+      });
+      return ok(toEvidenceFileView(file));
+    });
+  } catch (err) {
+    if (storedKey) await removeStoredFile(storedKey);
+    throw err;
+  }
 }
 
 // ---------- Import (R10) ----------

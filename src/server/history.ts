@@ -5,6 +5,7 @@ export const HISTORY_ACTIONS = [
   "import_batch",
   "evidence_checked",
   "evidence_unchecked",
+  "evidence_file_attached",
   "chargeback_filed",
   "representment_received",
   "decision_proposed",

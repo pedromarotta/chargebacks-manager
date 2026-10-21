@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     if (dev) {
       config.watchOptions = {
         ...config.watchOptions,
-        ignored: ["**/node_modules/**", "**/.git/**", "**/prisma/*.db*", "**/.tmp/**", "**/samples/**"],
+        ignored: ["**/node_modules/**", "**/.git/**", "**/prisma/*.db*", "**/.tmp/**", "**/samples/**", "**/uploads/**"],
       };
     }
     return config;

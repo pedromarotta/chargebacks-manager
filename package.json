@@ -14,7 +14,7 @@
     "sample": "tsx scripts/sample.ts",
     "representment": "tsx --env-file-if-exists=.env scripts/representment.ts",
     "ruling": "tsx --env-file-if-exists=.env scripts/ruling.ts",
-    "reset": "prisma migrate reset --force --skip-seed && npm run seed && npm run sample",
+    "reset": "prisma migrate reset --force --skip-seed && node -e \"require('fs').rmSync('uploads',{recursive:true,force:true})\" && npm run seed && npm run sample",
     "postinstall": "prisma generate"
   },
   "dependencies": {
