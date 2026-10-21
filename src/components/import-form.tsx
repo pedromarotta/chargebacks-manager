@@ -136,7 +136,7 @@ export function ImportForm({ canImport }: { canImport: boolean }) {
                   <TableCell className="text-right tabular-nums">{r.row ? formatMoney(r.row.amountCents, r.row.currency) : ""}</TableCell>
                   <TableCell>{r.row ? REASON_LABELS[r.row.reasonCode] ?? r.row.reasonCode : ""}</TableCell>
                   <TableCell className="text-xs">
-                    {r.reasons.length > 0 ? r.reasons.join("; ") : r.row ? `Opens as ${r.row.hasMerchantResponse ? STATUS_LABELS.REPRESENTMENT_RECEIVED : STATUS_LABELS.NEW}` : ""}
+                    {r.reasons.length > 0 ? r.reasons.join("; ") : r.result === "REPRESENTMENT" ? "Records the merchant response on the filed case" : r.row ? `Opens as ${r.row.hasMerchantResponse ? STATUS_LABELS.REPRESENTMENT_RECEIVED : STATUS_LABELS.NEW}` : ""}
                   </TableCell>
                 </TableRow>
               ))}
