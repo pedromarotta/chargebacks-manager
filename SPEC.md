@@ -56,9 +56,10 @@ Enforced on the server, using values read from the database inside the transacti
 - **R9 History.** Every change and every refused attempt writes one history row in the same transaction. The history table is append-only: SQLite triggers abort UPDATE and DELETE.
 - **R10 Import.** Analysts and leads only.
   - A row is rejected, with its reason recorded, if it has a missing or invalid amount, currency, due_at or reason_code; a card field that isn't exactly 4 digits; or any 13–19 digit number that passes the Luhn check, in any column.
-  - A case_id that already exists is recorded as DUPLICATE.
+  - A row for a case_id that already exists, with a merchant_response, records the representment on that case when it is CHARGEBACK_FILED and not past due_at: it becomes REPRESENTMENT_RECEIVED with a new due_at, and gets a `representment_received` history row by the importing user. If the case is past due_at, the row is rejected.
+  - Any other row for a case_id that already exists, or repeated in the same file, is recorded as DUPLICATE.
   - Valid rows become NEW cases, or REPRESENTMENT_RECEIVED when merchant_response is present. Each gets the evidence checklist for its reason code and a provisional credit equal to the amount.
-  - Each batch writes one history row with its counts.
+  - Each batch writes one history row with its counts (imported, rejected, duplicates, merchant responses).
 - **R11 Session.** The dev session cookie is HMAC-signed with SESSION_SECRET. A missing, unsigned or tampered cookie gets 401. Dev login is disabled when NODE_ENV=production.
 
 ## Screens

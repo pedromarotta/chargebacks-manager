@@ -149,6 +149,7 @@ model ImportBatch {
   imported   Int
   rejected   Int
   duplicates Int
+  representments Int @default(0)
 
   rows ImportRow[]
 }

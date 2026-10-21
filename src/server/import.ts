@@ -121,18 +121,41 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 const CASE_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
-export function parseAmountToCents(raw: string): number | null {
+/** Largest value the `amount_cents` / `provisional_credit_cents` columns (Prisma Int, signed 32-bit) can hold. */
+export const MAX_AMOUNT_CENTS = 2_147_483_647;
+
+function rawCents(raw: string): number | null {
   if (!AMOUNT_RE.test(raw)) return null;
   const [whole, frac = ""] = raw.split(".");
-  const cents = Number(whole) * 100 + Number(frac.padEnd(2, "0"));
-  return cents > 0 ? cents : null;
+  return Number(whole) * 100 + Number(frac.padEnd(2, "0"));
 }
 
-/** ISO 8601 with an offset, or a bare date (UTC). Date-only due dates mean end of that UTC day. */
+export function isAmountTooLarge(raw: string): boolean {
+  const cents = rawCents(raw);
+  return cents !== null && cents > MAX_AMOUNT_CENTS;
+}
+
+export function parseAmountToCents(raw: string): number | null {
+  const cents = rawCents(raw);
+  return cents !== null && cents > 0 && cents <= MAX_AMOUNT_CENTS ? cents : null;
+}
+
+function isRealCalendarDate(y: number, m: number, d: number): boolean {
+  return m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+/**
+ * ISO 8601 with an offset, or a bare date (UTC). Date-only due dates mean end of that UTC day.
+ * Impossible values (2026-02-30, 25:00, +15:00) are rejected instead of being rolled over by `Date`.
+ */
 export function parseUtcDate(raw: string, dateOnlyTime: "start" | "end"): Date | null {
   let iso = raw;
   if (DATE_ONLY_RE.test(raw)) iso = `${raw}T${dateOnlyTime === "end" ? "23:59:59" : "00:00:00"}Z`;
   else if (!DATETIME_RE.test(raw)) return null;
+  const [, y, mo, d, h, mi, s = "0", oh = "0", om = "0"] =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(iso) ?? [];
+  if (!y || !isRealCalendarDate(Number(y), Number(mo), Number(d))) return null;
+  if (Number(h) > 23 || Number(mi) > 59 || Number(s) > 59 || Number(oh) > 14 || Number(om) > 59) return null;
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? null : date;
 }
@@ -157,6 +180,7 @@ export function validateRow(cells: Record<Column, string>, rowNumber: number): P
 
   const amountCents = cells.amount ? parseAmountToCents(cells.amount) : null;
   if (!cells.amount) reasons.push("missing amount");
+  else if (isAmountTooLarge(cells.amount)) reasons.push("amount is too large");
   else if (amountCents === null) reasons.push("invalid amount");
 
   const currency = cells.currency.toUpperCase();

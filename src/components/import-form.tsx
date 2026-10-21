@@ -50,7 +50,7 @@ export function ImportForm({ canImport }: { canImport: boolean }) {
       setFile(null);
       setError(null);
       if (inputRef.current) inputRef.current.value = "";
-      toast.success(`Imported ${result.data.imported} · Rejected ${result.data.rejected} · Duplicates ${result.data.duplicates}`);
+      toast.success(`Imported ${result.data.imported} · Rejected ${result.data.rejected} · Duplicates ${result.data.duplicates} · Merchant responses ${result.data.representments}`);
     } else {
       setError(result.message);
       toast.error(result.message);
@@ -81,17 +81,21 @@ export function ImportForm({ canImport }: { canImport: boolean }) {
 
       {done ? (
         <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-          Imported {done.imported} · Rejected {done.rejected} · Duplicates {done.duplicates}
+          Imported {done.imported} · Rejected {done.rejected} · Duplicates {done.duplicates} · Merchant responses {done.representments}
         </div>
       ) : null}
 
       {preview ? (
         <div className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm">
           <span>
-            Preview of <span className="font-medium">{file?.name}</span>: {preview.imported} valid · {preview.rejected} rejected · {preview.duplicates} duplicates
+            Preview of <span className="font-medium">{file?.name}</span>: {preview.imported} valid · {preview.rejected} rejected · {preview.duplicates} duplicates · {preview.representments} merchant responses
           </span>
-          <Button onClick={confirm} disabled={busy || preview.imported === 0}>
-            {busy ? "Importing…" : `Confirm import of ${preview.imported}`}
+          <Button onClick={confirm} disabled={busy || preview.imported + preview.representments === 0}>
+            {busy
+              ? "Importing…"
+              : preview.representments > 0
+                ? `Confirm import of ${preview.imported} and ${preview.representments} merchant responses`
+                : `Confirm import of ${preview.imported}`}
           </Button>
         </div>
       ) : null}
@@ -119,6 +123,8 @@ export function ImportForm({ canImport }: { canImport: boolean }) {
                   <TableCell>
                     {r.result === "REJECTED" ? (
                       <Pill tone="red" icon={XCircle}>Rejected</Pill>
+                    ) : r.result === "REPRESENTMENT" ? (
+                      <Pill tone="indigo">Merchant response</Pill>
                     ) : r.result === "DUPLICATE" ? (
                       <Pill tone="grey" icon={Copy}>Duplicate</Pill>
                     ) : (
