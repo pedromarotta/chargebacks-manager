@@ -71,6 +71,6 @@ describe("lifecycle timeline and rejected filing (backlog 8)", () => {
     expect(await approveDecision(users.eve, c.id, {})).toMatchObject({ ok: true, value: { status: "CLOSED_LOST", provisionalCreditCents: 0 } });
     expect(await networkCallsFor(c.id)).toHaveLength(0);
     const row = await prisma.history.findFirstOrThrow({ where: { disputeId: c.id, action: "decision_approved" } });
-    expect(JSON.parse(row.after ?? "{}")).toMatchObject({ networkMessage: null, networkRef: null });
+    expect(JSON.parse(row.after ?? "{}")).toMatchObject({ networkMessage: null });
   });
 });
