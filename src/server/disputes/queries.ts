@@ -153,6 +153,7 @@ const DECISION_ACTIONS = ["decision_proposed", "decision_executed", "decision_ap
 export async function listHistory(
   actor: Actor | null,
   filters: { kind?: HistoryFilter; actorId?: string | null; disputeId?: string | null },
+  limit: number | null = 1000,
 ): Promise<Result<HistoryView[]>> {
   if (!actor) return refusal("UNAUTHENTICATED");
   if (!can(actor, "history:read")) return refusal("ROLE_NOT_ALLOWED");
@@ -162,7 +163,7 @@ export async function listHistory(
   if (filters.kind === "imports") where.action = "import_batch";
   if (filters.actorId) where.actorId = filters.actorId;
   if (filters.disputeId) where.disputeId = filters.disputeId;
-  const rows = await prisma.history.findMany({ where, orderBy: [{ at: "desc" }, { id: "desc" }], take: 1000 });
+  const rows = await prisma.history.findMany({ where, orderBy: [{ at: "desc" }, { id: "desc" }], ...(limit === null ? {} : { take: limit }) });
   return ok(rows.map(toHistoryView));
 }
 

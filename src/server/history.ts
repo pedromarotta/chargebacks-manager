@@ -10,6 +10,7 @@ export const HISTORY_ACTIONS = [
   "representment_received",
   "decision_proposed",
   "memo_edited",
+  "data_exported",
   "decision_executed",
   "decision_approved",
   "decision_rejected",

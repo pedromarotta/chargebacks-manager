@@ -79,6 +79,15 @@ On the queue, analysts and leads get a checkbox on each case they can write off 
 - Each case gets its own `decision_executed` history row. All rows from one run share a `bulkId`. A case that can't be written off (over the limit, wrong step, expired) is refused with its own history row, and the others still go through. The response lists the result for each case.
 - A bad role, a short note or an invalid selection refuses the whole request once, before any case is touched.
 
+## CSV export
+
+Auditors get an *Export CSV* button on the queue and on the history page. Both export what's on screen with the current tab or filters applied. Analysts and leads don't have the `export` permission (SPEC R5), so the routes return 403 for them.
+
+- `GET /api/export/queue?tab=&client=` exports one row per case: case, client, `card_last4`, merchant, amount and provisional credit as decimals (`1240.00`), currency, reason, status, UTC timestamps, due risk and decision fields.
+- `GET /api/export/history?kind=&actor=&case=` exports every matching history row, not only the 1,000 the page shows. Each row has the plain-language summary and changes plus the raw before/after JSON.
+- Files download as `text/csv` attachments with `no-store`. Cells are RFC 4180 quoted. A cell that starts with `= + - @` gets a leading `'` so spreadsheets won't run it as a formula. As a last line of defense, anything that looks like a full card number is replaced with `[redacted]`.
+- Each export writes a `data_exported` history row recording who exported, what, how many rows and which filters.
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.

@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { Download } from "lucide-react";
 import { HistoryList } from "@/components/disputes/history-list";
 import { SignInPrompt } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getCurrentUser } from "@/server/auth";
+import { can } from "@/server/policy";
 import { HISTORY_FILTERS, listHistory, listUsers, type HistoryFilter } from "@/server/disputes/queries";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +39,14 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         <h1 className="text-xl font-semibold">History</h1>
         <p className="text-sm text-muted-foreground">Every change and every refused attempt, newest first. Append-only.</p>
       </div>
+      {can(user, "export") ? (
+        <a
+          href={`/api/export/history?${new URLSearchParams({ ...(kind !== "all" ? { kind } : {}), ...(actorId ? { actor: actorId } : {}), ...(disputeId ? { case: disputeId } : {}) })}`}
+          className="inline-flex h-8 w-fit items-center gap-1.5 self-end rounded-md border border-zinc-200 bg-white px-3 text-sm font-medium hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-indigo-600 outline-none -mt-14"
+        >
+          <Download className="size-3.5" aria-hidden /> Export CSV
+        </a>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <nav aria-label="History filters" className="inline-flex h-9 items-center rounded-lg bg-zinc-100 p-1">
           {HISTORY_FILTERS.map((k) => (
