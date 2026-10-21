@@ -92,6 +92,12 @@ Auditors get an *Export CSV* button on the queue and on the history page. Both e
 
 *Due soon* in the sidebar, with a count badge, lists every open case due within 48 hours, including open cases already past due that haven't been expired yet. Cases are grouped into past due, the next 24 hours and 24–48 hours, then sorted by deadline risk. Each row shows the next step and a *Needs you* tag when the current user can take it. For example, a lead sees "Approve or reject" on a pending decision unless they proposed it. `getDueSoonDigest()` is read-only: opening the page never writes or expires anything (R1 expiry still only happens when someone acts on a case). It's in-app only, so no email is sent.
 
+## Lifecycle timeline and rejected filings
+
+The case page shows the 8 steps from BUSINESS_RULES §1: intake, validation, filing, evidence, representment, analysis, pre-arbitration and arbitration. `buildTimeline()` (`src/lib/timeline.ts`) works out each step's state (done, current, failed, doesn't apply, not started) and date from the case and its history. Completed steps form an unbroken sequence, and the first incomplete one is current. An accepted loss marks steps 7–8 as not applying. Expiry marks the current step failed.
+
+**Rejected filing.** The network can reject a filed chargeback. Simulate it with `npm run reject-filing -- <case_id> "<reason>"`, which goes through `rejectFiling()`, a `network:event`. The case moves to `FILING_REJECTED`, step 3 shows as failed with the reason, steps 4–8 don't apply, and an *Ops review* step becomes current. Ops review can only accept the loss, either by writing it off or by reversing the credit, and the normal rules apply: the $500 threshold, maker-checker, notes, and deadline (30 days). Pre-arbitration is refused. No network message is sent on that decision, because no chargeback exists at the network. Rejecting the proposal returns the case to `FILING_REJECTED`.
+
 ## Card number audit
 
 `tests/pan-audit.test.ts` is the proof that a full card number can't be stored, returned or exported. Using four card-number formats (plain, spaced, dashed, Amex), it sends a PAN through every write path: import fields, the import filename, decision notes, approve and reject notes, memos, bulk notes and ids, representment text, evidence keys, file names and file bytes, and case ids in the URL. Then it:

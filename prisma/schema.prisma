@@ -36,6 +36,8 @@ model Dispute {
   decidedBy                 String?   @map("decided_by")
   decidedAt                 DateTime? @map("decided_at")
   decisionNote              String?   @map("decision_note")
+  filingRejectedAt          DateTime? @map("filing_rejected_at")
+  filingRejectReason        String?   @map("filing_reject_reason")
   pWinPct                   Int?      @map("p_win_pct")
   expectedValueCents        Int?      @map("expected_value_cents")
   recommendation            String?

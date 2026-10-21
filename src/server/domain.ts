@@ -12,6 +12,7 @@ export interface Actor {
 export const STATUSES = [
   "NEW",
   "CHARGEBACK_FILED",
+  "FILING_REJECTED",
   "REPRESENTMENT_RECEIVED",
   "DECISION_PENDING",
   "WRITTEN_OFF",
@@ -25,6 +26,7 @@ export type Status = (typeof STATUSES)[number];
 export const OPEN_STATUSES: readonly Status[] = [
   "NEW",
   "CHARGEBACK_FILED",
+  "FILING_REJECTED",
   "REPRESENTMENT_RECEIVED",
   "DECISION_PENDING",
   "PRE_ARB_FILED",

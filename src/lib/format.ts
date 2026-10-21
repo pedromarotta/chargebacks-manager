@@ -32,6 +32,7 @@ export function formatDueIn(iso: string, now: Date): string {
 export const STATUS_LABELS: Record<string, string> = {
   NEW: "New",
   CHARGEBACK_FILED: "Chargeback filed",
+  FILING_REJECTED: "Filing rejected",
   REPRESENTMENT_RECEIVED: "Representment received",
   DECISION_PENDING: "Decision pending",
   WRITTEN_OFF: "Written off",
@@ -82,6 +83,7 @@ const ACTION_LABELS: Record<string, string> = {
   evidence_file_attached: "Attached a file",
   chargeback_filed: "Filed the chargeback",
   representment_received: "Merchant response received",
+  filing_rejected: "Network rejected the filing",
   decision_proposed: "Proposed a decision",
   memo_edited: "Edited the pre-arbitration memo",
   data_exported: "Exported a CSV",

@@ -77,12 +77,14 @@ export function DecisionPanel({ dispute: d, userId, names, perms, missingEvidenc
         )}
       </div>
     );
-  } else if (d.status === "REPRESENTMENT_RECEIVED") {
-    const options: { value: Choice; title: string; hint: string }[] = [
+  } else if (d.status === "REPRESENTMENT_RECEIVED" || d.status === "FILING_REJECTED") {
+    const allOptions: { value: Choice; title: string; hint: string }[] = [
       { value: "ACCEPT_LOSS_WRITE_OFF", title: DECISION_LABELS.ACCEPT_LOSS_WRITE_OFF, hint: "We absorb the loss; the cardholder keeps the provisional credit." },
       { value: "ACCEPT_LOSS_REVERSE_CREDIT", title: DECISION_LABELS.ACCEPT_LOSS_REVERSE_CREDIT, hint: "The cardholder's provisional credit is reversed to $0." },
       { value: "ESCALATE_PRE_ARB", title: DECISION_LABELS.ESCALATE_PRE_ARB, hint: `Fight it. Network fee ${preArbFee}.` },
     ];
+    // A rejected filing can only be closed by accepting the loss (BUSINESS_RULES §1).
+    const options = d.status === "FILING_REJECTED" ? allOptions.filter((o) => o.value !== "ESCALATE_PRE_ARB") : allOptions;
     body = perms.propose ? (
       <form
         className="flex flex-col gap-3"
@@ -96,7 +98,11 @@ export function DecisionPanel({ dispute: d, userId, names, perms, missingEvidenc
           void act("propose", { decisionType: choice, note, pWinPct, ...(choice === "ESCALATE_PRE_ARB" ? { merchantType, memo: memoText } : {}) }, needsApproval ? "Decision proposed. It now needs a lead's approval." : "Decision executed.");
         }}
       >
-        <FightOrAcceptHelper amountCents={d.amountCents} currency={d.currency} pWin={pWin} onPWin={setPWin} />
+        {d.status === "FILING_REJECTED" ? (
+          <p className="text-sm text-muted-foreground">The network rejected this filing. Close it by writing it off or reversing the provisional credit.</p>
+        ) : (
+          <FightOrAcceptHelper amountCents={d.amountCents} currency={d.currency} pWin={pWin} onPWin={setPWin} />
+        )}
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 flex items-center gap-2 text-sm font-medium">
             Decision

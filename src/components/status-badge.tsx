@@ -15,6 +15,7 @@ export type Tone = keyof typeof TONE;
 const STATUS_STYLE: Record<string, { tone: Tone; icon: ComponentType<{ className?: string }> }> = {
   NEW: { tone: "grey", icon: CircleDashed },
   CHARGEBACK_FILED: { tone: "indigo", icon: Send },
+  FILING_REJECTED: { tone: "red", icon: XCircle },
   REPRESENTMENT_RECEIVED: { tone: "amber", icon: FileText },
   DECISION_PENDING: { tone: "amber", icon: Hourglass },
   WRITTEN_OFF: { tone: "grey", icon: CheckCircle2 },

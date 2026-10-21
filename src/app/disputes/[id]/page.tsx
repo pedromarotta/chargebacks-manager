@@ -4,6 +4,7 @@ import { DecisionPanel } from "@/components/disputes/decision-panel";
 import { EvidenceChecklist } from "@/components/disputes/evidence-checklist";
 import { HistoryList } from "@/components/disputes/history-list";
 import { Lifecycle } from "@/components/disputes/lifecycle";
+import { buildTimeline } from "@/lib/timeline";
 import { DueBadge, StatusBadge } from "@/components/status-badge";
 import { SignInPrompt } from "@/components/states";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -115,7 +116,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className="flex flex-col gap-4">
-          <Lifecycle status={d.status} decisionType={d.decisionType} />
+          <Lifecycle steps={buildTimeline(d, history)} />
           <Card>
             <CardHeader>
               <CardTitle>History</CardTitle>
