@@ -11,6 +11,8 @@ export const ACTIONS = [
   "decision:reject",
   "export",
   "network:event",
+  "funds:move",
+  "funds:approve",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -21,11 +23,12 @@ const ANALYST: readonly Action[] = [
   "evidence:edit",
   "dispute:file",
   "decision:propose",
+  "funds:move",
 ];
 
 const GRANTS: Readonly<Record<ActorRole, readonly Action[]>> = {
   analyst: ANALYST,
-  lead: [...ANALYST, "decision:approve", "decision:reject"],
+  lead: [...ANALYST, "decision:approve", "decision:reject", "funds:approve"],
   auditor: ["dispute:read", "history:read", "export"],
   system: ["dispute:read", "network:event"],
 };

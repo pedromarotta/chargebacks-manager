@@ -18,6 +18,13 @@ export interface DisputeView {
   proposedBy: string | null;
   filingRejectedAt: string | null;
   filingRejectReason: string | null;
+  jurisdiction: string;
+  fundsStatus: string | null;
+  fundsReceivedAt: string | null;
+  fundsSettledAt: string | null;
+  fundsPendingMove: string | null;
+  fundsProposedBy: string | null;
+  fundsProposalNote: string | null;
   proposalNote: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
@@ -81,6 +88,13 @@ export function toDisputeView(d: Dispute): DisputeView {
     proposedBy: d.proposedBy,
     filingRejectedAt: d.filingRejectedAt?.toISOString() ?? null,
     filingRejectReason: d.filingRejectReason,
+    jurisdiction: d.jurisdiction,
+    fundsStatus: d.fundsStatus,
+    fundsReceivedAt: d.fundsReceivedAt?.toISOString() ?? null,
+    fundsSettledAt: d.fundsSettledAt?.toISOString() ?? null,
+    fundsPendingMove: d.fundsPendingMove,
+    fundsProposedBy: d.fundsProposedBy,
+    fundsProposalNote: d.fundsProposalNote,
     proposalNote: d.proposalNote,
     decidedBy: d.decidedBy,
     decidedAt: iso(d.decidedAt),

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { Dispute } from "@prisma/client";
+import type { Dispute, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { assessFightOrAccept } from "@/lib/fight-or-accept";
 import { formatMoney } from "@/lib/format";
+import { FUNDS_MOVE_FROM, FUNDS_MOVES, type FundsStatus } from "@/lib/funds";
 import { draftPreArbMemo, MEMO_MAX_LENGTH, MEMO_MIN_LENGTH, MERCHANT_TYPES } from "@/lib/pre-arb-memo";
 import { prisma, type Tx } from "../db";
 import { DECISION_TYPES, isDecisionType, isStatus, type Actor, type Status } from "../domain";
@@ -30,10 +31,15 @@ import { toDisputeView, toEvidenceFileView, type DisputeView, type EvidenceFileV
 
 const TX_OPTIONS = { maxWait: 15_000, timeout: 15_000 };
 
-export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "bulk_write_off" | "import" | "representment" | "ruling" | "filing_rejected";
+export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "bulk_write_off" | "import" | "representment" | "ruling" | "filing_rejected" | "funds_received" | "funds_program" | "funds_propose" | "funds_approve" | "funds_reject";
 
 const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   filing_rejected: "network:event",
+  funds_received: "network:event",
+  funds_program: "funds:move",
+  funds_propose: "funds:move",
+  funds_approve: "funds:approve",
+  funds_reject: "funds:approve",
   file: "dispute:file",
   propose: "decision:propose",
   approve: "decision:approve",
@@ -886,7 +892,8 @@ export async function recordRuling(actor: Actor, disputeId: unknown, input: unkn
     const status: Status = parsed.data.outcome === "WON" ? "CLOSED_WON" : "CLOSED_LOST";
     const claimed = await w.tx.dispute.updateMany({
       where: { id: d.id, status: "PRE_ARB_FILED" },
-      data: { status, updatedAt: now },
+      // Backlog 9: with no provisional credit, the cardholder only gets the money after the win (BUSINESS_RULES §5).
+      data: { status, updatedAt: now, ...(status === "CLOSED_WON" && d.provisionalCreditCents === 0 ? { fundsStatus: "FUNDS_NOT_YET_RECEIVED" } : {}) },
     });
     if (claimed.count !== 1) return w.refuse("INVALID_STATUS");
     await record(w.tx, {
@@ -936,3 +943,136 @@ export async function rejectFiling(actor: Actor, disputeId: unknown, input: unkn
 }
 
 export const NETWORK_ACTOR: Actor = { id: "network", name: "Card network (simulated)", role: "system" };
+
+/* Backlog 9: funds tracking after a won dispute (BUSINESS_RULES §5). */
+
+const FundsProposeInput = z.object({ move: z.enum(FUNDS_MOVES), note: Note });
+const FundsRejectInput = z.object({ note: Note });
+
+function fundsSnapshot(d: Dispute) {
+  return { status: d.status, fundsStatus: d.fundsStatus, fundsPendingMove: d.fundsPendingMove, fundsProposedBy: d.fundsProposedBy };
+}
+
+async function loadTrackedFunds(w: Writer, rawId: unknown): Promise<Refusal | Dispute> {
+  const id = DisputeId.safeParse(rawId);
+  const d = id.success ? await w.tx.dispute.findUnique({ where: { id: id.data } }) : null;
+  if (d) w.disputeId = d.id;
+  if (!can(w.actor, ATTEMPT_PERMISSION[w.attempted])) return w.refuse("ROLE_NOT_ALLOWED", d ? { before: fundsSnapshot(d) } : {});
+  if (!d) return w.refuse("NOT_FOUND");
+  if (d.status !== "CLOSED_WON" || d.fundsStatus === null) {
+    return w.refuse("INVALID_STATUS", {
+      message:
+        d.status === "CLOSED_WON"
+          ? "This case had a provisional credit, so the win made it final. There are no funds to track."
+          : "Funds are only tracked on won cases.",
+      before: fundsSnapshot(d),
+    });
+  }
+  return d;
+}
+
+async function moveFunds(w: Writer, d: Dispute, to: FundsStatus, action: HistoryAction, data: Prisma.DisputeUpdateManyMutationInput, note: string | null = null) {
+  const moved = await w.tx.dispute.updateMany({
+    where: { id: d.id, fundsStatus: d.fundsStatus, fundsPendingMove: d.fundsPendingMove },
+    data: { fundsStatus: to, ...data },
+  });
+  if (moved.count !== 1) return w.refuse("ALREADY_DECIDED", { message: "These funds changed; reload and try again.", before: fundsSnapshot(d) });
+  const after = await w.tx.dispute.findUniqueOrThrow({ where: { id: d.id } });
+  await record(w.tx, { actor: w.actor, action, disputeId: d.id, before: fundsSnapshot(d), after: fundsSnapshot(after), note });
+  return ok(toDisputeView(after));
+}
+
+/** Network event: the acquirer's funds arrive. Parked time starts now. */
+export async function recordFundsReceived(actor: Actor, disputeId: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "funds_received", String(disputeId), async (w) => {
+    const d = await loadTrackedFunds(w, disputeId);
+    if (isRefusal(d)) return d;
+    if (d.fundsStatus !== "FUNDS_NOT_YET_RECEIVED") return w.refuse("INVALID_STATUS", { message: "These funds were already received.", before: fundsSnapshot(d) });
+    return moveFunds(w, d, "FUNDS_RECEIVED_FROM_ACQUIRER", "funds_received", { fundsReceivedAt: now, updatedAt: now });
+  });
+}
+
+/** Internal ledger step; no maker-checker (only moving money to the cardholder or reversing it needs one). */
+export async function creditProgram(actor: Actor | null, disputeId: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "funds_program", String(disputeId), async (w) => {
+    const d = await loadTrackedFunds(w, disputeId);
+    if (isRefusal(d)) return d;
+    if (d.fundsPendingMove) return w.refuse("INVALID_STATUS", { message: "A funds move is waiting for approval.", before: fundsSnapshot(d) });
+    if (d.fundsStatus !== "FUNDS_RECEIVED_FROM_ACQUIRER") {
+      return w.refuse("INVALID_STATUS", { message: "Only funds received from the acquirer can be credited to the program.", before: fundsSnapshot(d) });
+    }
+    return moveFunds(w, d, "FUNDS_CREDITED_TO_PROGRAM", "funds_credited_to_program", { updatedAt: now });
+  });
+}
+
+/** Maker step (R4, R6): propose crediting the cardholder or reversing the funds. Always needs a different lead. */
+export async function proposeFundsMove(actor: Actor | null, disputeId: unknown, input: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "funds_propose", String(disputeId), async (w) => {
+    const d = await loadTrackedFunds(w, disputeId);
+    if (isRefusal(d)) return d;
+    const parsed = FundsProposeInput.safeParse(input);
+    if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "Choose to credit the cardholder or reverse the funds, and add a note.", before: fundsSnapshot(d) });
+    const { move, note } = parsed.data;
+    if (hasCardNumber(note)) return w.refuse("CARD_NUMBER", { before: fundsSnapshot(d) });
+    if (d.fundsPendingMove) return w.refuse("INVALID_STATUS", { message: "A funds move is already waiting for approval.", before: fundsSnapshot(d), note });
+    const allowed = FUNDS_MOVE_FROM[move].includes(d.fundsStatus as FundsStatus);
+    if (!allowed) {
+      return w.refuse("INVALID_STATUS", {
+        message: move === "CREDIT_CARDHOLDER" ? "Credit the funds to the program before crediting the cardholder." : "Only received funds that haven't been settled can be reversed.",
+        before: fundsSnapshot(d),
+        note,
+      });
+    }
+    if (!isValidNote(note)) return w.refuse("NOTE_TOO_SHORT", { before: fundsSnapshot(d), note });
+    const claimed = await w.tx.dispute.updateMany({
+      where: { id: d.id, fundsStatus: d.fundsStatus, fundsPendingMove: null },
+      data: { fundsPendingMove: move, fundsProposedBy: w.actor.id, fundsProposalNote: note.trim(), updatedAt: now },
+    });
+    if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "These funds changed; reload and try again." });
+    const after = await w.tx.dispute.findUniqueOrThrow({ where: { id: d.id } });
+    await record(w.tx, { actor: w.actor, action: "funds_move_proposed", disputeId: d.id, before: fundsSnapshot(d), after: fundsSnapshot(after), note: note.trim() });
+    return ok(toDisputeView(after));
+  });
+}
+
+async function checkFundsDecision(w: Writer, d: Dispute): Promise<Refusal | null> {
+  if (!d.fundsPendingMove) return w.refuse("INVALID_STATUS", { message: "There's no funds move waiting for approval.", before: fundsSnapshot(d) });
+  if (d.fundsProposedBy === w.actor.id) {
+    return w.refuse("SELF_APPROVAL_BLOCKED", {
+      action: "decision_blocked",
+      message: "You proposed this funds move; a different lead must approve or reject it.",
+      before: fundsSnapshot(d),
+    });
+  }
+  return null;
+}
+
+/** Checker step (R4): a lead who didn't propose it. */
+export async function approveFundsMove(actor: Actor | null, disputeId: unknown, input: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "funds_approve", String(disputeId), async (w) => {
+    const d = await loadTrackedFunds(w, disputeId);
+    if (isRefusal(d)) return d;
+    const blocked = await checkFundsDecision(w, d);
+    if (blocked) return blocked;
+    const parsed = ApproveInput.safeParse(input);
+    if (!parsed.success) return w.refuse("INVALID_INPUT", { before: fundsSnapshot(d) });
+    const comment = parsed.data?.comment?.trim() || null;
+    if (hasCardNumber(comment)) return w.refuse("CARD_NUMBER", { before: fundsSnapshot(d) });
+    const to: FundsStatus = d.fundsPendingMove === "REVERSE" ? "FUNDS_REVERSED" : "FUNDS_CREDITED_TO_CARDHOLDER";
+    return moveFunds(w, d, to, "funds_move_approved", { fundsPendingMove: null, fundsSettledAt: now, fundsDecidedBy: w.actor.id, updatedAt: now }, comment);
+  });
+}
+
+export async function rejectFundsMove(actor: Actor | null, disputeId: unknown, input: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "funds_reject", String(disputeId), async (w) => {
+    const d = await loadTrackedFunds(w, disputeId);
+    if (isRefusal(d)) return d;
+    const blocked = await checkFundsDecision(w, d);
+    if (blocked) return blocked;
+    const parsed = FundsRejectInput.safeParse(input);
+    const note = parsed.success ? parsed.data.note : "";
+    if (hasCardNumber(note)) return w.refuse("CARD_NUMBER", { before: fundsSnapshot(d) });
+    if (!isValidNote(note)) return w.refuse("NOTE_TOO_SHORT", { before: fundsSnapshot(d), note: note || null });
+    return moveFunds(w, d, d.fundsStatus as FundsStatus, "funds_move_rejected", { fundsPendingMove: null, fundsProposedBy: null, fundsProposalNote: null, updatedAt: now }, note.trim());
+  });
+}

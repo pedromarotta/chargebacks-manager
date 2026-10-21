@@ -47,6 +47,9 @@ interface SeedCase {
   decidedBy?: string;
   checkedEvidence: "required" | "none";
   events: SeedEvent[];
+  jurisdiction?: string;
+  fundsStatus?: string;
+  fundsReceivedDaysAgo?: number;
 }
 
 const filed = (daysAgo: number, by = "u_ana"): SeedEvent => ({
@@ -217,7 +220,48 @@ export const SEED_CASES: readonly SeedCase[] = [
       },
     ],
   },
+  wonCase({ id: "CB-1008", client: "Pampa Wallet", cardLast4: "7741", merchant: "MercadoLibre", amountCents: 42000, jurisdiction: "BR", fundsStatus: "FUNDS_CREDITED_TO_PROGRAM", receivedDaysAgo: 8 }),
+  wonCase({ id: "CB-1009", client: "Andes Pay", cardLast4: "5190", merchant: "Liverpool", amountCents: 31000, jurisdiction: "MX", fundsStatus: "FUNDS_RECEIVED_FROM_ACQUIRER", receivedDaysAgo: 1.5 }),
 ];
+
+function networkSeedActor(): Actor {
+  return { id: "network", name: "Card network (simulated)", role: "system" };
+}
+
+/** Backlog 9: a case won through pre-arbitration with no provisional credit, so the funds are tracked. */
+function wonCase(c: { id: string; client: string; cardLast4: string; merchant: string; amountCents: number; jurisdiction: string; fundsStatus: string; receivedDaysAgo: number }): SeedCase {
+  const response = "Merchant says the cardholder authorised the purchase.";
+  return {
+    ...c,
+    reasonCode: "FRAUD",
+    status: "CLOSED_WON",
+    openedDaysAgo: 90,
+    dueInDays: 10,
+    provisionalCreditCents: 0,
+    merchantResponse: response,
+    decisionType: "ESCALATE_PRE_ARB",
+    proposedBy: "u_ana",
+    proposalNote: "3DS was not used and the device is new; worth fighting.",
+    decidedBy: "u_ana",
+    checkedEvidence: "required",
+    fundsReceivedDaysAgo: c.receivedDaysAgo,
+    events: [
+      filed(85),
+      represented(45, response),
+      {
+        daysAgo: 40,
+        actor: actor("u_ana"),
+        action: "decision_executed",
+        before: { status: "REPRESENTMENT_RECEIVED" },
+        after: { status: "PRE_ARB_FILED", decisionType: "ESCALATE_PRE_ARB", networkMessage: "PRE_ARB" },
+        note: "3DS was not used and the device is new; worth fighting.",
+        network: "PRE_ARB",
+      },
+      { daysAgo: 12, actor: networkSeedActor(), action: "ruling_recorded", before: { status: "PRE_ARB_FILED" }, after: { status: "CLOSED_WON", outcome: "WON", fundsStatus: "FUNDS_NOT_YET_RECEIVED" } },
+      { daysAgo: c.receivedDaysAgo, actor: networkSeedActor(), action: "funds_received", before: { fundsStatus: "FUNDS_NOT_YET_RECEIVED" }, after: { fundsStatus: "FUNDS_RECEIVED_FROM_ACQUIRER" } },
+    ],
+  };
+}
 
 /** Idempotent: fixed ids, existing users are updated, existing cases are left untouched. */
 export async function seed(prisma: PrismaClient, now = new Date()): Promise<{ created: string[] }> {
@@ -245,6 +289,9 @@ export async function seed(prisma: PrismaClient, now = new Date()): Promise<{ cr
           dueAt: addDays(now, c.dueInDays),
           status: c.status,
           provisionalCreditCents: c.provisionalCreditCents ?? c.amountCents,
+          jurisdiction: c.jurisdiction ?? "US",
+          fundsStatus: c.fundsStatus ?? null,
+          fundsReceivedAt: c.fundsReceivedDaysAgo == null ? null : addDays(now, -c.fundsReceivedDaysAgo),
           merchantResponse: c.merchantResponse ?? null,
           representmentReceivedAt: representedEvent ? addDays(now, -representedEvent.daysAgo) : null,
           decisionType: c.decisionType ?? null,
