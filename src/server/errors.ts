@@ -10,6 +10,7 @@ export const REFUSAL_CODES = [
   "ALREADY_DECIDED",
   "INVALID_STATUS",
   "BULK_LIMIT",
+  "CARD_NUMBER",
 ] as const;
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
 
@@ -25,6 +26,7 @@ export const HTTP_STATUS: Record<RefusalCode, number> = {
   ALREADY_DECIDED: 409,
   INVALID_STATUS: 409,
   BULK_LIMIT: 409,
+  CARD_NUMBER: 400,
 };
 
 /** Plain-language defaults shown in the UI. Codes never reach the UI. */
@@ -40,6 +42,7 @@ export const PLAIN_MESSAGES: Record<RefusalCode, string> = {
   ALREADY_DECIDED: "This decision has already been made.",
   INVALID_STATUS: "This case isn't at a step where that can be done.",
   BULK_LIMIT: "Bulk write-off is only for cases under $500.00. Open the case to propose a decision a lead can approve.",
+  CARD_NUMBER: "This looks like a full card number. Remove it and use only the last 4 digits.",
 };
 
 export interface Refusal {

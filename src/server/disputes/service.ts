@@ -163,6 +163,11 @@ async function loadCase(w: Writer, rawId: unknown, now: Date): Promise<Refusal |
   return dispute;
 }
 
+/** Backlog 6: free text from a request is refused, never stored, if it holds a full card number. */
+function hasCardNumber(...texts: (string | null | undefined)[]): boolean {
+  return texts.some((t) => typeof t === "string" && containsCardNumber(t));
+}
+
 function isRefusal(value: Refusal | Dispute): value is Refusal {
   return "ok" in value && value.ok === false;
 }
@@ -274,6 +279,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
     return w.refuse("INVALID_INPUT", { message: "Choose one of the three decisions; P(win) must be a whole number from 0 to 100." });
   }
   const { decisionType, note, pWinPct } = parsed.data;
+  if (hasCardNumber(note)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
 
   if (statusOf(d) !== "REPRESENTMENT_RECEIVED") {
     return w.refuse("INVALID_STATUS", {
@@ -371,6 +377,7 @@ export async function approveDecision(
     const parsed = ApproveInput.safeParse(input);
     if (!parsed.success) return w.refuse("INVALID_INPUT");
     const comment = parsed.data?.comment?.trim() || null;
+    if (hasCardNumber(comment)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
 
     if (statusOf(d) !== "DECISION_PENDING" || !isDecisionType(d.decisionType)) {
       return w.refuse("ALREADY_DECIDED", { before: { status: d.status } });
@@ -428,6 +435,7 @@ export async function rejectDecision(
     const parsed = RejectInput.safeParse(input);
     if (!parsed.success) return w.refuse("INVALID_INPUT");
     const note = parsed.data.note;
+    if (hasCardNumber(note)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
 
     if (statusOf(d) !== "DECISION_PENDING") {
       return w.refuse("ALREADY_DECIDED", { before: { status: d.status }, note });
@@ -648,6 +656,7 @@ export async function bulkWriteOff(actor: Actor | null, input: unknown, now = ne
     return once((w) => w.refuse("INVALID_INPUT", { message: `Select between 1 and ${BULK_MAX} different cases.` }));
   }
   const { note } = parsed.data;
+  if (hasCardNumber(note, ...ids)) return once((w) => w.refuse("CARD_NUMBER"));
   if (!isValidNote(note)) return once((w) => w.refuse("NOTE_TOO_SHORT", { note }));
 
   const bulkId = randomUUID();
@@ -718,6 +727,7 @@ export async function importDisputes(actor: Actor | null, input: unknown, now = 
     if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "Choose a CSV file to import." });
     const { csv, dryRun = false } = parsed.data;
     const filename = parsed.data.filename?.trim() || "upload.csv";
+    if (hasCardNumber(filename)) return w.refuse("CARD_NUMBER");
 
     const file = parseDisputeFile(csv);
     if (!file.ok) return w.refuse("INVALID_INPUT", { message: file.error, after: { filename } });
@@ -825,6 +835,7 @@ export async function receiveRepresentment(
     if (!d) return w.refuse("NOT_FOUND");
     const parsed = RepresentmentInput.safeParse(input);
     if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "The merchant response text is required." });
+    if (hasCardNumber(parsed.data.merchantResponse)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
     if (statusOf(d) !== "CHARGEBACK_FILED") {
       return w.refuse("INVALID_STATUS", { message: "Representments only apply to filed chargebacks.", before: { status: d.status } });
     }
