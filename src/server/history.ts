@@ -9,6 +9,7 @@ export const HISTORY_ACTIONS = [
   "chargeback_filed",
   "representment_received",
   "decision_proposed",
+  "memo_edited",
   "decision_executed",
   "decision_approved",
   "decision_rejected",

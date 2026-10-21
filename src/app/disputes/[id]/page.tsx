@@ -100,6 +100,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           <DecisionPanel
             key={`dp-${formKey}`}
             dispute={d}
+            userId={user.id}
             names={names}
             perms={{
               file: can(user, "dispute:file"),

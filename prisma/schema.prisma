@@ -39,6 +39,8 @@ model Dispute {
   pWinPct                   Int?      @map("p_win_pct")
   expectedValueCents        Int?      @map("expected_value_cents")
   recommendation            String?
+  merchantType              String?   @map("merchant_type")
+  preArbMemo                String?   @map("pre_arb_memo")
   networkRef                String?   @map("network_ref")
   createdAt                 DateTime  @default(now()) @map("created_at")
   updatedAt                 DateTime  @updatedAt @map("updated_at")

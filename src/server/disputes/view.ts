@@ -23,6 +23,8 @@ export interface DisputeView {
   pWinPct: number | null;
   expectedValueCents: number | null;
   recommendation: string | null;
+  merchantType: string | null;
+  preArbMemo: string | null;
   networkRef: string | null;
   updatedAt: string;
 }
@@ -82,6 +84,8 @@ export function toDisputeView(d: Dispute): DisputeView {
     pWinPct: d.pWinPct,
     expectedValueCents: d.expectedValueCents,
     recommendation: d.recommendation,
+    merchantType: d.merchantType,
+    preArbMemo: d.preArbMemo,
     networkRef: d.networkRef,
     updatedAt: d.updatedAt.toISOString(),
   };
