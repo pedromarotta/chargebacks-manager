@@ -9,6 +9,7 @@ export const REFUSAL_CODES = [
   "NOTE_TOO_SHORT",
   "ALREADY_DECIDED",
   "INVALID_STATUS",
+  "BULK_LIMIT",
 ] as const;
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
 
@@ -23,6 +24,7 @@ export const HTTP_STATUS: Record<RefusalCode, number> = {
   NOTE_TOO_SHORT: 400,
   ALREADY_DECIDED: 409,
   INVALID_STATUS: 409,
+  BULK_LIMIT: 409,
 };
 
 /** Plain-language defaults shown in the UI. Codes never reach the UI. */
@@ -37,6 +39,7 @@ export const PLAIN_MESSAGES: Record<RefusalCode, string> = {
   NOTE_TOO_SHORT: "Add a note of at least 10 characters explaining the reason.",
   ALREADY_DECIDED: "This decision has already been made.",
   INVALID_STATUS: "This case isn't at a step where that can be done.",
+  BULK_LIMIT: "Bulk write-off is only for cases under $500.00. Open the case to propose a decision a lead can approve.",
 };
 
 export interface Refusal {

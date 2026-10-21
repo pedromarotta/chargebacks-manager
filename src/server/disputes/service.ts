@@ -30,7 +30,7 @@ import { toDisputeView, toEvidenceFileView, type DisputeView, type EvidenceFileV
 
 const TX_OPTIONS = { maxWait: 15_000, timeout: 15_000 };
 
-export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "import" | "representment" | "ruling";
+export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "bulk_write_off" | "import" | "representment" | "ruling";
 
 const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   file: "dispute:file",
@@ -40,6 +40,7 @@ const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
   evidence: "evidence:edit",
   attach: "evidence:edit",
   memo: "decision:propose",
+  bulk_write_off: "decision:propose",
   import: "dispute:import",
   representment: "network:event",
   ruling: "network:event",
@@ -86,6 +87,7 @@ interface RefuseOptions {
 
 /** Writes the refusal's history row in the current transaction, then returns the refusal (R9). */
 class Writer {
+  bulkId: string | null = null;
   disputeId: string | null = null;
 
   constructor(
@@ -107,6 +109,7 @@ class Writer {
         code,
         reason: result.message,
         ...(this.disputeId === null && this.requestedId ? { requestedId: this.requestedId } : {}),
+        ...(this.bulkId ? { bulkId: this.bulkId } : {}),
         ...opts.after,
       },
       note: opts.note ?? null,
@@ -260,94 +263,99 @@ export async function proposeDecision(
   input: unknown,
   now = new Date(),
 ): Promise<Result<DisputeView>> {
-  return inWrite(actor, "propose", String(disputeId), async (w) => {
-    const d = await loadCase(w, disputeId, now);
-    if (isRefusal(d)) return d;
-    const parsed = ProposeInput.safeParse(input);
-    if (!parsed.success) {
-      return w.refuse("INVALID_INPUT", { message: "Choose one of the three decisions; P(win) must be a whole number from 0 to 100." });
-    }
-    const { decisionType, note, pWinPct } = parsed.data;
+  return inWrite(actor, "propose", String(disputeId), (w) => proposeIn(w, disputeId, input, now));
+}
 
-    if (statusOf(d) !== "REPRESENTMENT_RECEIVED") {
-      return w.refuse("INVALID_STATUS", {
-        message:
-          d.status === "DECISION_PENDING"
-            ? "A decision is already waiting for approval on this case."
-            : "Decisions can only be proposed once the merchant's representment has arrived.",
-        before: { status: d.status },
-        note,
-      });
-    }
-    if (!isValidNote(note)) return w.refuse("NOTE_TOO_SHORT", { before: { status: d.status }, note });
-    const trimmedNote = (note ?? "").trim();
-    // Computed from the amount in the database, never from the request (backlog 0).
-    const assessment = pWinPct === undefined ? null : assessFightOrAccept(d.amountCents, d.currency, pWinPct);
-    const helper = {
-      pWinPct: assessment?.pWinPct ?? null,
-      expectedValueCents: assessment?.expectedValueCents ?? null,
-      recommendation: assessment?.recommendation ?? null,
-    };
-    // Backlog 3: escalations carry a pre-arbitration memo; without one, the template draft is used.
-    let memo: { merchantType: string | null; preArbMemo: string | null } = { merchantType: null, preArbMemo: null };
-    if (decisionType === "ESCALATE_PRE_ARB") {
-      const merchantType = parsed.data.merchantType ?? "PHYSICAL_GOODS";
-      const text = (parsed.data.memo ?? "").trim() || draftPreArbMemo(memoFacts(d), merchantType);
-      const problem = memoProblem(text);
-      if (problem) return w.refuse("INVALID_INPUT", { message: problem, before: { status: d.status } });
-      memo = { merchantType, preArbMemo: text };
-    }
+async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Date): Promise<Result<DisputeView>> {
+  const d = await loadCase(w, disputeId, now);
+  if (isRefusal(d)) return d;
+  const parsed = ProposeInput.safeParse(input);
+  if (!parsed.success) {
+    return w.refuse("INVALID_INPUT", { message: "Choose one of the three decisions; P(win) must be a whole number from 0 to 100." });
+  }
+  const { decisionType, note, pWinPct } = parsed.data;
 
-    if (needsApproval(d.amountCents, d.currency)) {
-      const claimed = await w.tx.dispute.updateMany({
-        where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
-        data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper, ...memo },
-      });
-      if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
-      await record(w.tx, {
-        actor: w.actor,
-        action: "decision_proposed",
-        disputeId: d.id,
-        before: { status: d.status },
-        after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, ...helper, ...memo },
-        note: trimmedNote,
-      });
-      return ok(await reload(w.tx, d.id));
-    }
+  if (statusOf(d) !== "REPRESENTMENT_RECEIVED") {
+    return w.refuse("INVALID_STATUS", {
+      message:
+        d.status === "DECISION_PENDING"
+          ? "A decision is already waiting for approval on this case."
+          : "Decisions can only be proposed once the merchant's representment has arrived.",
+      before: { status: d.status },
+      note,
+    });
+  }
+  if (!isValidNote(note)) return w.refuse("NOTE_TOO_SHORT", { before: { status: d.status }, note });
+  if (w.attempted === "bulk_write_off" && needsApproval(d.amountCents, d.currency)) {
+    return w.refuse("BULK_LIMIT", { before: { status: d.status, amountCents: d.amountCents } });
+  }
+  const trimmedNote = (note ?? "").trim();
+  // Computed from the amount in the database, never from the request (backlog 0).
+  const assessment = pWinPct === undefined ? null : assessFightOrAccept(d.amountCents, d.currency, pWinPct);
+  const helper = {
+    pWinPct: assessment?.pWinPct ?? null,
+    expectedValueCents: assessment?.expectedValueCents ?? null,
+    recommendation: assessment?.recommendation ?? null,
+  };
+  // Backlog 3: escalations carry a pre-arbitration memo; without one, the template draft is used.
+  let memo: { merchantType: string | null; preArbMemo: string | null } = { merchantType: null, preArbMemo: null };
+  if (decisionType === "ESCALATE_PRE_ARB") {
+    const merchantType = parsed.data.merchantType ?? "PHYSICAL_GOODS";
+    const text = (parsed.data.memo ?? "").trim() || draftPreArbMemo(memoFacts(d), merchantType);
+    const problem = memoProblem(text);
+    if (problem) return w.refuse("INVALID_INPUT", { message: problem, before: { status: d.status } });
+    memo = { merchantType, preArbMemo: text };
+  }
 
-    const outcome = outcomeFor(decisionType);
+  if (needsApproval(d.amountCents, d.currency)) {
     const claimed = await w.tx.dispute.updateMany({
       where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
-      data: {
-        status: outcome.status,
-        decisionType,
-        proposedBy: w.actor.id,
-        proposalNote: trimmedNote,
-        ...helper,
-        ...memo,
-        decidedBy: w.actor.id,
-        decidedAt: now,
-        ...(outcome.reverseCredit ? { provisionalCreditCents: 0 } : {}),
-        ...(outcome.status === "PRE_ARB_FILED" ? { dueAt: addDays(now, ARBITRATION_WINDOW_DAYS) } : {}),
-      },
+      data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper, ...memo },
     });
     if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
-    const sent = await submit(w.tx, {
-      idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
-      disputeId: d.id,
-      message: outcome.message,
-    });
-    const after = await w.tx.dispute.findUniqueOrThrow({ where: { id: d.id } });
     await record(w.tx, {
       actor: w.actor,
-      action: "decision_executed",
+      action: "decision_proposed",
       disputeId: d.id,
-      before: decisionSnapshot(d),
-      after: { ...decisionSnapshot(after), networkMessage: outcome.message, networkRef: sent.networkRef },
+      before: { status: d.status },
+      after: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, ...helper, ...memo },
       note: trimmedNote,
     });
-    return ok(toDisputeView(after));
+    return ok(await reload(w.tx, d.id));
+  }
+
+  const outcome = outcomeFor(decisionType);
+  const claimed = await w.tx.dispute.updateMany({
+    where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
+    data: {
+      status: outcome.status,
+      decisionType,
+      proposedBy: w.actor.id,
+      proposalNote: trimmedNote,
+      ...helper,
+      ...memo,
+      decidedBy: w.actor.id,
+      decidedAt: now,
+      ...(outcome.reverseCredit ? { provisionalCreditCents: 0 } : {}),
+      ...(outcome.status === "PRE_ARB_FILED" ? { dueAt: addDays(now, ARBITRATION_WINDOW_DAYS) } : {}),
+    },
   });
+  if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
+  const sent = await submit(w.tx, {
+    idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
+    disputeId: d.id,
+    message: outcome.message,
+  });
+  const after = await w.tx.dispute.findUniqueOrThrow({ where: { id: d.id } });
+  await record(w.tx, {
+    actor: w.actor,
+    action: "decision_executed",
+    disputeId: d.id,
+    before: decisionSnapshot(d),
+    after: { ...decisionSnapshot(after), networkMessage: outcome.message, networkRef: sent.networkRef, ...(w.bulkId ? { bulkId: w.bulkId } : {}) },
+    note: trimmedNote,
+  });
+  return ok(toDisputeView(after));
 }
 
 /** Action 4a: approve a pending decision (R1, R4, R5, R7, R8, R9). */
@@ -610,6 +618,49 @@ export async function editMemo(actor: Actor | null, disputeId: unknown, input: u
     });
     return ok(await reload(w.tx, d.id));
   });
+}
+
+/** Backlog 4: write off several small cases at once. Each case runs the normal propose path in its own transaction. */
+export const BULK_MAX = 50;
+export const BulkWriteOffInput = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(BULK_MAX),
+  note: Note,
+});
+export interface BulkItemResult {
+  id: string;
+  ok: boolean;
+  message?: string;
+}
+export interface BulkResult {
+  bulkId: string;
+  writtenOff: number;
+  refused: number;
+  results: BulkItemResult[];
+}
+
+export async function bulkWriteOff(actor: Actor | null, input: unknown, now = new Date()): Promise<Result<BulkResult>> {
+  if (!actor) return unauthenticated("bulk_write_off");
+  const once = (fn: (w: Writer) => Promise<Refusal>) => inWrite<BulkResult>(actor, "bulk_write_off", null, fn);
+  if (!can(actor, "decision:propose")) return once((w) => w.refuse("ROLE_NOT_ALLOWED"));
+  const parsed = BulkWriteOffInput.safeParse(input);
+  const ids = parsed.success ? parsed.data.ids : [];
+  if (!parsed.success || new Set(ids).size !== ids.length) {
+    return once((w) => w.refuse("INVALID_INPUT", { message: `Select between 1 and ${BULK_MAX} different cases.` }));
+  }
+  const { note } = parsed.data;
+  if (!isValidNote(note)) return once((w) => w.refuse("NOTE_TOO_SHORT", { note }));
+
+  const bulkId = randomUUID();
+  const results: BulkItemResult[] = [];
+  for (const id of ids) {
+    const r = await inWrite(actor, "bulk_write_off", id, (w) => {
+      w.bulkId = bulkId;
+      return proposeIn(w, id, { decisionType: "ACCEPT_LOSS_WRITE_OFF", note }, now);
+    });
+    results.push(r.ok ? { id, ok: true } : { id, ok: false, message: r.message });
+  }
+  const writtenOff = results.filter((r) => r.ok).length;
+  return ok({ bulkId, writtenOff, refused: results.length - writtenOff, results });
 }
 
 // ---------- Import (R10) ----------

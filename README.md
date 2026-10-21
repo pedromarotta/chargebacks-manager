@@ -71,6 +71,14 @@ When an analyst chooses *Escalate to pre-arbitration*, the decision panel drafts
 - Memos need at least 10 characters, can be at most 5,000, and are refused if they contain a full card number. If an API call escalates without a memo, the template draft for physical goods is saved.
 - Rejecting the decision clears the memo. Approving keeps it on the case.
 
+## Bulk write-off
+
+On the queue, analysts and leads get a checkbox on each case they can write off in bulk: at *Representment received*, under $500.00 and not past due. Select some or all of them, add one note, and click *Write off N cases*. Auditors don't see the checkboxes.
+
+- `POST /api/disputes/bulk-write-off {"ids": [...], "note": "..."}` takes 1–50 different cases. `bulkWriteOff()` runs each case through the normal propose path in its own transaction, so every rule still applies per case: role, deadline, status, the $500 limit, exactly-once network submission and history.
+- Each case gets its own `decision_executed` history row. All rows from one run share a `bulkId`. A case that can't be written off (over the limit, wrong step, expired) is refused with its own history row, and the others still go through. The response lists the result for each case.
+- A bad role, a short note or an invalid selection refuses the whole request once, before any case is touched.
+
 ## API
 
 The UI calls the same routes, so curl gets the same answers. Bodies are JSON; errors are `{ "error": { "code", "message" } }`.
