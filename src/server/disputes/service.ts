@@ -30,9 +30,10 @@ import { toDisputeView, toEvidenceFileView, type DisputeView, type EvidenceFileV
 
 const TX_OPTIONS = { maxWait: 15_000, timeout: 15_000 };
 
-export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "bulk_write_off" | "import" | "representment" | "ruling";
+export type Attempt = "file" | "propose" | "approve" | "reject" | "evidence" | "attach" | "memo" | "bulk_write_off" | "import" | "representment" | "ruling" | "filing_rejected";
 
 const ATTEMPT_PERMISSION: Record<Attempt, Action> = {
+  filing_rejected: "network:event",
   file: "dispute:file",
   propose: "decision:propose",
   approve: "decision:approve",
@@ -281,7 +282,14 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
   const { decisionType, note, pWinPct } = parsed.data;
   if (hasCardNumber(note)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
 
-  if (statusOf(d) !== "REPRESENTMENT_RECEIVED") {
+  const from = statusOf(d);
+  if (from === "FILING_REJECTED" && decisionType === "ESCALATE_PRE_ARB") {
+    return w.refuse("INVALID_STATUS", {
+      message: "The network rejected this filing, so it can't go to pre-arbitration. Write it off or reverse the credit.",
+      before: { status: d.status },
+    });
+  }
+  if (from !== "REPRESENTMENT_RECEIVED" && from !== "FILING_REJECTED") {
     return w.refuse("INVALID_STATUS", {
       message:
         d.status === "DECISION_PENDING"
@@ -315,7 +323,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
 
   if (needsApproval(d.amountCents, d.currency)) {
     const claimed = await w.tx.dispute.updateMany({
-      where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
+      where: { id: d.id, status: from },
       data: { status: "DECISION_PENDING", decisionType, proposedBy: w.actor.id, proposalNote: trimmedNote, ...helper, ...memo },
     });
     if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
@@ -332,7 +340,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
 
   const outcome = outcomeFor(decisionType);
   const claimed = await w.tx.dispute.updateMany({
-    where: { id: d.id, status: "REPRESENTMENT_RECEIVED" },
+    where: { id: d.id, status: from },
     data: {
       status: outcome.status,
       decisionType,
@@ -347,7 +355,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
     },
   });
   if (claimed.count !== 1) return w.refuse("INVALID_STATUS", { message: "This case changed; reload and try again." });
-  const sent = await submit(w.tx, {
+  const sent = d.filingRejectedAt ? null : await submit(w.tx, {
     idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
     disputeId: d.id,
     message: outcome.message,
@@ -358,7 +366,7 @@ async function proposeIn(w: Writer, disputeId: unknown, input: unknown, now: Dat
     action: "decision_executed",
     disputeId: d.id,
     before: decisionSnapshot(d),
-    after: { ...decisionSnapshot(after), networkMessage: outcome.message, networkRef: sent.networkRef, ...(w.bulkId ? { bulkId: w.bulkId } : {}) },
+    after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null, networkRef: sent?.networkRef ?? null, ...(w.bulkId ? { bulkId: w.bulkId } : {}) },
     note: trimmedNote,
   });
   return ok(toDisputeView(after));
@@ -404,7 +412,7 @@ export async function approveDecision(
     });
     if (decided.count !== 1) return w.refuse("ALREADY_DECIDED", { before: { status: d.status } });
 
-    const sent = await submit(w.tx, {
+    const sent = d.filingRejectedAt ? null : await submit(w.tx, {
       idempotencyKey: idempotencyKeyFor(d.id, outcome.message),
       disputeId: d.id,
       message: outcome.message,
@@ -415,7 +423,7 @@ export async function approveDecision(
       action: "decision_approved",
       disputeId: d.id,
       before: decisionSnapshot(d),
-      after: { ...decisionSnapshot(after), networkMessage: outcome.message, networkRef: sent.networkRef },
+      after: { ...decisionSnapshot(after), networkMessage: sent ? outcome.message : null, networkRef: sent?.networkRef ?? null },
       note: comment,
     });
     return ok(toDisputeView(after));
@@ -448,7 +456,7 @@ export async function rejectDecision(
     const decided = await w.tx.dispute.updateMany({
       where: { id: d.id, status: "DECISION_PENDING" },
       data: {
-        status: "REPRESENTMENT_RECEIVED",
+        status: d.filingRejectedAt ? "FILING_REJECTED" : "REPRESENTMENT_RECEIVED",
         decisionType: null,
         proposedBy: null,
         proposalNote: null,
@@ -468,7 +476,7 @@ export async function rejectDecision(
       action: "decision_rejected",
       disputeId: d.id,
       before: decisionSnapshot(d),
-      after: { status: "REPRESENTMENT_RECEIVED", decisionType: null, proposedBy: null },
+      after: { status: d.filingRejectedAt ? "FILING_REJECTED" : "REPRESENTMENT_RECEIVED", decisionType: null, proposedBy: null },
       note: (note ?? "").trim(),
     });
     return ok(await reload(w.tx, d.id));
@@ -887,6 +895,41 @@ export async function recordRuling(actor: Actor, disputeId: unknown, input: unkn
       disputeId: d.id,
       before: { status: d.status },
       after: { status, outcome: parsed.data.outcome },
+    });
+    return ok(await reload(w.tx, d.id));
+  });
+}
+
+export const FilingRejectedInput = z.object({ reason: z.string().trim().min(1).max(500) });
+
+/** Network event: the network rejects a filed chargeback (BUSINESS_RULES §1). Ops then reviews it. */
+export async function rejectFiling(actor: Actor, disputeId: unknown, input: unknown, now = new Date()): Promise<Result<DisputeView>> {
+  return inWrite(actor, "filing_rejected", String(disputeId), async (w) => {
+    const id = DisputeId.safeParse(disputeId);
+    const d = id.success ? await w.tx.dispute.findUnique({ where: { id: id.data } }) : null;
+    if (d) w.disputeId = d.id;
+    if (!can(w.actor, "network:event")) return w.refuse("ROLE_NOT_ALLOWED");
+    if (!d) return w.refuse("NOT_FOUND");
+    const parsed = FilingRejectedInput.safeParse(input);
+    if (!parsed.success) return w.refuse("INVALID_INPUT", { message: "The network's rejection reason is required." });
+    const reason = parsed.data.reason;
+    if (hasCardNumber(reason)) return w.refuse("CARD_NUMBER", { before: { status: d.status } });
+    if (statusOf(d) !== "CHARGEBACK_FILED") {
+      return w.refuse("INVALID_STATUS", { message: "Only a filed chargeback can be rejected by the network.", before: { status: d.status } });
+    }
+    const dueAt = addDays(now, RESPONSE_WINDOW_DAYS);
+    const claimed = await w.tx.dispute.updateMany({
+      where: { id: d.id, status: "CHARGEBACK_FILED" },
+      data: { status: "FILING_REJECTED", filingRejectedAt: now, filingRejectReason: reason, dueAt, updatedAt: now },
+    });
+    if (claimed.count !== 1) return w.refuse("INVALID_STATUS");
+    await record(w.tx, {
+      actor: w.actor,
+      action: "filing_rejected",
+      disputeId: d.id,
+      before: { status: d.status },
+      after: { status: "FILING_REJECTED", dueAt: dueAt.toISOString() },
+      note: reason,
     });
     return ok(await reload(w.tx, d.id));
   });

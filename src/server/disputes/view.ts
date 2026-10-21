@@ -16,6 +16,8 @@ export interface DisputeView {
   merchantResponse: string | null;
   decisionType: string | null;
   proposedBy: string | null;
+  filingRejectedAt: string | null;
+  filingRejectReason: string | null;
   proposalNote: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
@@ -77,6 +79,8 @@ export function toDisputeView(d: Dispute): DisputeView {
     merchantResponse: d.merchantResponse,
     decisionType: d.decisionType,
     proposedBy: d.proposedBy,
+    filingRejectedAt: d.filingRejectedAt?.toISOString() ?? null,
+    filingRejectReason: d.filingRejectReason,
     proposalNote: d.proposalNote,
     decidedBy: d.decidedBy,
     decidedAt: iso(d.decidedAt),
