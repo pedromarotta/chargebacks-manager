@@ -1,5 +1,9 @@
 # Chargebacks Manager
 
+> **Built by Devin from one Slack message.** I wrote the four input files (AGENTS.md, SPEC.md, BUSINESS_RULES.md, DESIGN.md); Devin wrote the code in 12 PRs, plus a 13th from one follow-up message for the review fixes. I reviewed and merged all 13.
+>
+> [Loom](https://www.loom.com/share/cecd79c4ceea45ae9c5394263639de05) · How it was built: [BUILD_LOG.md](BUILD_LOG.md) · Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) · Key decisions: [docs/KEY_DECISIONS.md](docs/KEY_DECISIONS.md)
+
 Internal, issuer-side tool for the disputes team: import the clients' daily disputes file, file chargebacks with the card network, review merchant responses, propose and approve money decisions (maker-checker), and keep an append-only history of every change and every refused attempt.
 
 `SPEC.md` decides what gets built, `BUSINESS_RULES.md` explains the domain, `DESIGN.md` the UI, and `AGENTS.md` the engineering rules.
